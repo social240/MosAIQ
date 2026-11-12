@@ -88,6 +88,14 @@ Deno.serve(async (req) => {
         headers: { 'Authorization': 'Bearer ' + stripeKey },
       }).then(async r => ({ ok: r.ok, body: await r.json().catch(() => ({})) }));
 
+    // Second safeguard (RLS already stops a member editing their customer id):
+    // only cancel subscriptions of a Stripe customer stamped with this member.
+    const owner = await stripe(`customers/${encodeURIComponent(customer)}`);
+    const stamped = owner.body?.metadata?.supabase_user_id;
+    if (!owner.ok || (stamped && stamped !== user.id)) {
+      console.error('delete-account: customer check failed for', user.id);
+      return json({ error: 'We could not verify your billing record, so nothing was deleted. Please contact support.' }, 409);
+    }
     const list = await stripe(`subscriptions?customer=${encodeURIComponent(customer)}&status=all&limit=100`);
     if (!list.ok) {
       console.error('delete-account: listing subscriptions failed:', list.body?.error?.message);

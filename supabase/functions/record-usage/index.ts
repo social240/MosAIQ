@@ -6,7 +6,8 @@
 // Server to server only. How long a call lasted must come from the system that
 // ran it (Delphi, once it reports session length -- see USAGE-TRACKING.md),
 // never from a member's browser, which could simply report less. So the caller
-// must present the service-role key, and a member's own token is refused.
+// must present a server key (service_role or a secret key; see
+// _shared/server-key.ts), and a member's own token is refused.
 // Balances are written only by record_usage() in the database, which is
 // service-role only too.
 //
@@ -26,8 +27,9 @@
 //   npx supabase functions deploy record-usage
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { bearer, isServerKey } from '../_shared/server-key.ts';
 
-const json = (body: unknown, status = 200) =>
+const json =(body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
     headers: { 'Content-Type': 'application/json' },
@@ -40,14 +42,6 @@ const MAX_CHATS = 500;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CALL_ID = /^[A-Za-z0-9._:-]{1,100}$/;
 
-// Constant-time compare, so the key cannot be guessed byte by byte from timing.
-function safeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
@@ -59,8 +53,7 @@ Deno.serve(async (req) => {
   }
 
   // 1. Only the backend may report usage.
-  const auth = req.headers.get('Authorization') ?? '';
-  if (!safeEqual(auth, 'Bearer ' + serviceKey)) {
+  if (!(await isServerKey(url, bearer(req)))) {
     return json({ error: 'Usage is recorded by the server, not the browser.' }, 403);
   }
 

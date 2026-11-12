@@ -11,5 +11,8 @@ node_modules/
 # Reports written by each test run (tests/reports/run-<date>-<run>.json).
 tests/reports/
 
+# Supabase CLI scratch files.
+supabase/.temp/
+
 .DS_Store
 Thumbs.db

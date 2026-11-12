@@ -580,6 +580,11 @@ async function appInit(){
  if(!MEMBER_ONLY.includes(page)&&page!=='subscribe'&&pendingIntent!=='signup')document.body.classList.add('authReady');
  const subscribed=await RMAuth.isSubscribed();
 
+ // Back from Stripe Checkout: confirm it with Stripe through the server, which
+ // activates the membership now instead of waiting on Stripe's webhook.
+ const qs=new URLSearchParams(location.search);
+ if(page==='home'&&qs.get('checkout')==='success'){ await confirmCheckout(qs.get('session_id'),subscribed); return; }
+
  // Just signed up with Google from the signup page: go on to checkout, as an
  // email signup does. One-shot, so a later visit to home is not redirected.
  let intent=null; try{intent=localStorage.getItem('rm_oauth_intent');localStorage.removeItem('rm_oauth_intent')}catch(e){}
@@ -601,6 +606,7 @@ async function appInit(){
  document.body.classList.toggle('isSubscribed',subscribed);
  setupSubscribeGate(subscribed);
  setupCheckoutButton();
+ showWelcome(subscribed);
 
  // Checkout could not be opened right after signing up. Say so, rather than
  // leaving the new member wondering why nothing was charged.
@@ -614,9 +620,8 @@ async function appInit(){
  if(new URLSearchParams(location.search).get('checkout')==='cancelled'&&!subscribed){
   showErr('Checkout was cancelled. Your membership has not started yet.');
  }
- await setupBillingStatus(subscribed);
- await setupBillingControls();
- await setupBalances();
+ await setupBillingPage(subscribed);
+ await setupBalances(subscribed);
  await setupActivity();
  await setupWalletMembership(subscribed);
 }
@@ -672,9 +677,35 @@ function fmtDuration(totalSeconds){
  return m+'m'+(rem?' '+rem+'s':'');
 }
 
-async function setupBalances(){
+// Wallet limits are OFF for now: the client asked for no voice or chat limits
+// at launch ("we will add it after"). Members see "Unlimited" and no allowance
+// is granted. To turn limits on, set this to true AND WALLET_LIMITS in
+// supabase/functions/_shared/membership.ts, then redeploy those functions.
+const WALLET_LIMITS=false;
+
+async function setupBalances(subscribed){
  const slots=['#homeMinutes','#homeChats','#walletMinutes','#walletChats'].filter(s=>$(s));
  if(!slots.length)return;
+
+ if(!WALLET_LIMITS){
+  // Value, plus the small label under it ("voice minutes", "left", "chats").
+  const set=(sel,val,label)=>{
+   const e=$(sel); if(!e)return; e.textContent=val;
+   const sub=e.parentElement&&e.parentElement.querySelector('.appSub');
+   if(sub&&label!==undefined)sub.textContent=label;
+  };
+  if(subscribed){
+   set('#homeMinutes','Unlimited','voice'); set('#homeChats','Unlimited','text');
+   set('#walletMinutes','Unlimited',''); set('#walletChats','Unlimited','');
+  }else{
+   ['#homeMinutes','#homeChats','#walletMinutes','#walletChats'].forEach(s=>set(s,'—'));
+  }
+  const note=subscribed
+   ? 'Voice and text conversations are unlimited for members right now.'
+   : 'Start a membership to use voice calls and text conversations.';
+  ['#homeBalanceNote','#walletNote'].forEach(s=>{const e=$(s);if(e)e.textContent=note;});
+  return;
+ }
 
  const w=await RMAuth.wallet();
  // A failed read must not read as "you have nothing left".
@@ -732,6 +763,10 @@ async function setupWalletMembership(subscribed){
 // balance was zero — the list and the balance contradicted each other.
 async function setupActivity(){
  const box=$('#walletActivity'); if(!box)return;
+ if(!WALLET_LIMITS){
+  box.innerHTML='<p class="appSub">Nothing to track yet: voice and text have no limits right now.</p>';
+  return;
+ }
 
  const rows=await RMAuth.ledger(6);
  if(rows===null){
@@ -783,19 +818,150 @@ async function setupActivity(){
  }
 }
 
-// Card summary + the buttons that open Stripe's Billing Portal.
-async function setupBillingControls(){
- const slot=$('#cardSummary');
- if(slot){
-  const p=await RMAuth.profile();
-  if(p?.card_last4){
-   const brand=(p.card_brand||'card').replace(/^./,c=>c.toUpperCase());
-   slot.textContent=brand+' ending in '+p.card_last4;
-  }else{
-   slot.textContent='No card on file';
-  }
+// Money and dates the way the member's browser writes them.
+const fmtMoney=(cents,cur)=>{
+ const n=(Number(cents)||0)/100;
+ try{return new Intl.NumberFormat(undefined,{style:'currency',currency:String(cur||'usd').toUpperCase()}).format(n)}
+ catch(e){return '$'+n.toFixed(2)}
+};
+const fmtDate=d=>{const t=d?new Date(d):null;return t&&!isNaN(t)?t.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}):''};
+
+// A message across the top of the page.
+function pageBanner(text,kind){
+ let el=$('#pageBanner');
+ if(!el){
+  el=document.createElement('div'); el.id='pageBanner'; el.setAttribute('role','status');
+  el.style.margin='0 0 18px'; ($('main')||document.body).prepend(el);
  }
+ el.className=kind; el.style.display='block'; el.textContent=text;
+ return el;
+}
+
+// Back from Stripe Checkout (home.html?checkout=success&session_id=...). The
+// server checks the session with Stripe and applies the membership; then the
+// page loads again as a member, with Call and Text open.
+async function confirmCheckout(sessionId,subscribed){
+ document.body.classList.add('authReady');
+ const banner=pageBanner('Confirming your membership with Stripe…','success');
+ let state=null;
+ for(const wait of [0,2500,5000,10000]){
+  if(wait)await new Promise(r=>setTimeout(r,wait));
+  try{ state=await RMAuth.syncMembership(sessionId||undefined); }
+  catch(e){ console.warn('[RavMizAI] membership check failed:',e?.message); }
+  if(state?.is_member)break;
+ }
+ if(state?.is_member||subscribed){
+  try{sessionStorage.setItem('rm_welcome',JSON.stringify(state||{}))}catch(e){}
+  location.replace('home.html');
+  return;
+ }
+ banner.className='error';
+ banner.textContent='We could not confirm your membership yet. If your payment went through, wait a minute and refresh this page, or open Membership & Billing.';
+}
+
+// After a confirmed checkout: say plainly what the member now has.
+function showWelcome(subscribed){
+ let s=null;
+ try{ s=JSON.parse(sessionStorage.getItem('rm_welcome')||'null'); sessionStorage.removeItem('rm_welcome'); }catch(e){}
+ if(!s||!subscribed)return;
+ const charge=s.next_charge, money=charge?fmtMoney(charge.amount,charge.currency):'';
+ let text='Welcome, your membership is active. Call and Text are open.';
+ if(s.status==='trialing'){
+  text='Welcome, your 7-day free trial is active. Call and Text are open.'+(charge
+   ? ` Your first charge of ${money} is on ${fmtDate(charge.date)}; cancel before then and you won’t be charged.`
+   : (s.trial_end?` Your trial ends on ${fmtDate(s.trial_end)}.`:''));
+ }else if(charge){
+  text+=` Next charge: ${money} on ${fmtDate(charge.date)}.`;
+ }
+ pageBanner(text,'success');
+}
+
+// Membership & Billing. First from our own records, so nothing sits on
+// "Checking…"; then from Stripe through the server, which also repairs a
+// membership that a lost webhook never applied.
+async function setupBillingPage(subscribed){
+ if(!$('#billingStatus'))return;
  setupBillingButtons();
+ let p=null; try{ p=await RMAuth.profile(); }catch(e){}
+ const st=p?.subscription_status||'none';
+ renderBilling({
+  status:st, is_member:subscribed, period_end:p?.subscribed_until,
+  trial_end:st==='trialing'?p?.subscribed_until:null,
+  card:p?.card_last4?{brand:p.card_brand,last4:p.card_last4}:null
+ },false);
+
+ let s=null;
+ try{ s=await RMAuth.syncMembership(); }
+ catch(e){
+  const h=$('#billingHistory');
+  if(h)h.innerHTML='<p class="appSub">Billing details are unavailable right now. Please refresh in a moment.</p>';
+  return;
+ }
+ // The server just applied a membership our records had missed: load once
+ // more so every part of the app agrees.
+ let reloaded=null; try{ reloaded=sessionStorage.getItem('rm_billing_reloaded'); }catch(e){}
+ if(s.is_member!==subscribed&&!reloaded){
+  try{ sessionStorage.setItem('rm_billing_reloaded','1'); }catch(e){}
+  location.reload(); return;
+ }
+ try{ sessionStorage.removeItem('rm_billing_reloaded'); }catch(e){}
+ renderBilling(s,true);
+}
+
+function renderBilling(s,fromStripe){
+ const head=$('#billingStatus'), note=$('#billingNote'), cta=$('#billingCta');
+ const st=s.status||'none', charge=s.next_charge, money=charge?fmtMoney(charge.amount,charge.currency):'';
+ const ends=fmtDate(s.period_end), trialEnds=fmtDate(s.trial_end||s.period_end);
+ let title='No active membership', text='Start a membership to use voice calls and text conversations.', ok=false, cta1=true;
+ if(st==='trialing'&&s.is_member){
+  title='Free trial active'; ok=true; cta1=false;
+  text=s.cancel_at_period_end ? `Your trial ends on ${trialEnds} and won’t renew. You won’t be charged.`
+   : charge ? `Your trial ends on ${fmtDate(charge.date)}. Your first charge of ${money} is on that day; cancel before then and you won’t be charged.`
+   : (trialEnds?`Your trial ends on ${trialEnds}.`:'Your trial is active.');
+ }else if(s.is_member){
+  title='Membership active'; ok=true; cta1=false;
+  text=s.cancel_at_period_end ? `Cancelled. Your access continues until ${ends}, and you won’t be charged again.`
+   : charge ? `Next charge: ${money} on ${fmtDate(charge.date)}.`
+   : (ends?`Renews ${ends}.`:'Active.');
+ }else if(st==='past_due'||st==='unpaid'){
+  title='Payment problem'; cta1=false;
+  text='Your last payment didn’t go through. Update your card to keep your membership.';
+ }else if(st==='incomplete'){
+  title='Payment not completed';
+  text='Your checkout wasn’t completed, so your membership hasn’t started.';
+ }
+ head.textContent=title; head.style.color=ok?'':'#B4232A';
+ if(note)note.textContent=text;
+ if(cta)cta.style.display=cta1?'':'none';
+
+ const card=$('#cardSummary');
+ if(card)card.textContent=s.card?.last4
+  ? `${String(s.card.brand||'card').replace(/^./,c=>c.toUpperCase())} ending in ${s.card.last4}`
+  : 'No card on file';
+ if(!fromStripe)return;
+
+ // Only a Stripe customer has a billing portal to open.
+ const customer=st!=='none'||(s.invoices||[]).length>0||!!s.card;
+ const manage=$('#manageSection'), upd=$('#updateCard');
+ if(manage)manage.style.display=customer?'':'none';
+ if(upd)upd.style.display=customer?'':'none';
+
+ const box=$('#billingHistory'); if(!box)return;
+ const rows=s.invoices||[];
+ if(!rows.length){ box.innerHTML='<p class="appSub">No charges yet.</p>'; return; }
+ const label={paid:'Paid',open:'Due',void:'Voided',uncollectible:'Unpaid',draft:'Upcoming'};
+ box.innerHTML='';
+ for(const i of rows){
+  const row=document.createElement('div'); row.className='activityRow';
+  const left=document.createElement('div');
+  const b=document.createElement('b'); b.textContent=i.description||'RavMizAI Membership';
+  const sm=document.createElement('small'); sm.textContent=[fmtDate(i.date),label[i.status]||i.status].filter(Boolean).join(' · ');
+  left.append(b,sm);
+  const amt=document.createElement(i.url?'a':'span');
+  amt.textContent=fmtMoney(i.amount,i.currency);
+  if(i.url){ amt.href=i.url; amt.target='_blank'; amt.rel='noopener'; amt.title='View invoice'; }
+  row.append(left,amt); box.appendChild(row);
+ }
 }
 function setupBillingButtons(){
  const open=async()=>{
@@ -811,21 +977,6 @@ function setupBillingButtons(){
  if(upd)upd.onclick=e=>{e.preventDefault();open();};
 }
 
-async function setupBillingStatus(subscribed){
- const head=$('#billingStatus'); if(!head)return;
- const p=await RMAuth.profile();
- const until=p?.subscribed_until?new Date(p.subscribed_until):null;
- head.textContent=subscribed?'Membership active':'No active membership';
- head.style.color=subscribed?'':'#ff8f98';
- const note=$('#billingNote');
- if(note){
-  note.textContent=subscribed
-   ?(until?'Renews '+until.toLocaleDateString()+'.':'Active with no expiry set.')
-   :'Start a membership to use voice calls and text conversations.';
- }
- const cta=$('#billingCta');
- if(cta)cta.style.display=subscribed?'none':'';
-}
 function setupPrefs(){
  const form=$('#prefsForm'); if(!form)return;
  const saved=JSON.parse(localStorage.getItem('rm_prefs')||'{}');

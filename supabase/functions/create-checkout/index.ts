@@ -18,6 +18,7 @@
 //   SITE_URL            https://your-site.netlify.app
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { applySubscription, stripeGet } from '../_shared/membership.ts';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -117,6 +118,22 @@ Deno.serve(async (req) => {
       });
       customerId = customer.id;
       await admin.rpc('link_stripe_customer', { p_user_id: user.id, p_customer_id: customerId });
+    } else {
+      // 3b. Stripe may hold a live subscription the database never heard about
+      //     (a webhook that did not arrive). Apply it and stop, rather than sell
+      //     the member a second subscription and charge them twice.
+      const list = await stripeGet(stripeKey, `subscriptions?customer=${encodeURIComponent(customerId)}&status=all&limit=10`);
+      const live = (list.data ?? []).find((s: any) =>
+        ['trialing', 'active', 'past_due', 'unpaid', 'incomplete', 'paused'].includes(s.status));
+      if (live && (live.status === 'trialing' || live.status === 'active')) {
+        await applySubscription(admin, live, live.status, user.id);
+        return json({ ok: false, reason: 'already_subscribed',
+                      message: 'Your membership is already active.' }, 409);
+      }
+      if (live) {
+        return json({ ok: false, reason: 'payment_issue',
+                      message: 'Your membership has a payment problem. Open Membership & Billing to update your card.' }, 409);
+      }
     }
 
     // 4. The Checkout Session. Price and trial length come from server config.
@@ -134,7 +151,10 @@ Deno.serve(async (req) => {
       payment_method_collection: 'always',
       allow_promotion_codes: 'true',
       client_reference_id: user.id,
-      success_url: siteUrl + '/app/home.html?checkout=success',
+      // Stripe fills in the session id; the home page hands it to
+      // sync-membership, which confirms it with Stripe and activates the
+      // member at once instead of waiting for the webhook.
+      success_url: siteUrl + '/app/home.html?checkout=success&session_id={CHECKOUT_SESSION_ID}',
       cancel_url: siteUrl + '/app/subscribe.html?checkout=cancelled',
     });
 

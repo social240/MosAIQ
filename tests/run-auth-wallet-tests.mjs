@@ -333,8 +333,10 @@ const FLASH_SAMPLER = () => {
     await step('A2', 'Wallet: funding', async () => {
       // The webhook must fund the wallet, and the plan must apply exactly once
       // per trial and per paid period. The SQL is what the webhook calls.
+      const shared = fs.readFileSync(path.join(HERE, '..', 'supabase', 'functions', '_shared', 'membership.ts'), 'utf8');
       const hook = fs.readFileSync(path.join(HERE, '..', 'supabase', 'functions', 'stripe-webhook', 'index.ts'), 'utf8');
-      const wired = /apply_stripe_allowance/.test(hook);
+      const wired = /apply_stripe_allowance/.test(shared) && /applySubscription/.test(hook);
+      const limitsOn = /export const WALLET_LIMITS = true/.test(shared);
       const sub = `sub_autotest_${RUN}`;
       const w0 = await wallet(idA);
       await stripeAllowance(idA, sub, 'trialing'); const trial = await wallet(idA);
@@ -349,7 +351,7 @@ const FLASH_SAMPLER = () => {
       const okTrial = trial.s - w0.s === 3600 && trial.c - w0.c === 120 && trialAgain.s === trial.s;
       const okPaid = paid.s === 10800 && paidAgain.s === 10800 && renewed.s === 10800 && unpaid.s === 10800;
       record('A2', 'Wallet: funding', wired && okTrial && okPaid && reconciles ? 'PASS' : 'FAIL',
-        `${wired ? 'the Stripe webhook funds the wallet' : 'the Stripe webhook does NOT call apply_stripe_allowance'}; trial start -> +${fmtDuration(trial.s - w0.s)} voice, +${trial.c - w0.c} chats (repeat event: no change ${trialAgain.s === trial.s}); first paid month -> ${fmtDuration(paid.s)} (unused trial time expired; repeat event: no change ${paidAgain.s === paid.s}); renewal after using 1h -> ${fmtDuration(renewed.s)} (reset, no roll-over); payment failed -> nothing added (${fmtDuration(unpaid.s)}); history adds up to the balance: ${reconciles}`);
+        `${!wired ? 'the Stripe webhook does NOT call apply_stripe_allowance' : limitsOn ? 'the Stripe webhook funds the wallet' : 'voice and chat limits are OFF at the client\'s request (members are unlimited and no allowance is granted); the funding logic below is ready for when they are switched on'}; trial start -> +${fmtDuration(trial.s - w0.s)} voice, +${trial.c - w0.c} chats (repeat event: no change ${trialAgain.s === trial.s}); first paid month -> ${fmtDuration(paid.s)} (unused trial time expired; repeat event: no change ${paidAgain.s === paid.s}); renewal after using 1h -> ${fmtDuration(renewed.s)} (reset, no roll-over); payment failed -> nothing added (${fmtDuration(unpaid.s)}); history adds up to the balance: ${reconciles}`);
     });
     await step('A3', 'Wallet: deductions', async () => {
       const before = await wallet(idA);
@@ -455,6 +457,19 @@ const FLASH_SAMPLER = () => {
         `signed in -> after refresh: ${afterRefresh === A ? 'still signed in' : 'signed out'}; after closing and reopening the browser: ${afterReopen === A ? 'still signed in' : 'signed out'}; after "Sign out" and reopening: ${outAfterSignOut ? 'signed out' : 'STILL SIGNED IN'}. Sessions have no time limit (${cfg.sessions_timebox ? 'timebox set' : 'no timebox'}, ${cfg.sessions_inactivity_timeout ? 'inactivity timeout set' : 'no inactivity timeout'}).`);
       record('A10', 'Wallet: balance after refresh', shown1 === db && shown2 === db ? 'PASS' : 'FAIL',
         `wallet page shows ${shown1}, after refresh ${shown2}; database holds ${db}`);
+    });
+
+    // S1. Security headers and third-party code ---------------------------------------
+    await step('S1', 'Security headers and third-party scripts', async () => {
+      const res = await fetch(`${SITE}/?cb=${RUN}`);
+      const html = await res.text();
+      const csp = res.headers.get('content-security-policy') || '';
+      const scriptSrc = (csp.match(/script-src([^;]*)/) || [])[1] || '';
+      const external = [...html.matchAll(/<script[^>]+src=['"]?(https?:\/\/[^'" >]+)/g)].map(m => new URL(m[1]).host);
+      const inline = (html.match(/<script(?![^>]*\bsrc=)[^>]*>/g) || []).length;
+      const ok = csp && !/unsafe-inline|unsafe-eval/.test(scriptSrc) && /frame-ancestors/.test(csp) && !external.includes('cdn.jsdelivr.net') && inline === 0;
+      record('S1', 'Security headers and third-party scripts', ok ? 'PASS' : 'FAIL',
+        `Content-Security-Policy ${csp ? 'set' : 'MISSING'}; scripts allowed from: ${scriptSrc.trim() || '—'}; inline scripts on the home page: ${inline}; supabase-js ${external.includes('cdn.jsdelivr.net') ? 'still loaded from a CDN with a floating version' : 'served from this site, pinned'}; framing: ${/frame-ancestors 'self'/.test(csp) ? 'this site only' : 'not restricted'}`);
     });
 
     // 10. Rate limiting ---------------------------------------------------------------

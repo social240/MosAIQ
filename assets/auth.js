@@ -135,6 +135,13 @@
     async resend() { localStorage.setItem('rm_verify_code', '111111'); return true; },
     async signOut() { localStorage.removeItem('rm_user'); return true; },
 
+    // Offline there is no Stripe: report what the prototype user record says.
+    async syncMembership() {
+      const u = proto.read();
+      const live = Boolean(u?.member) && !(u?.trialEnds && Date.now() > u.trialEnds);
+      return { ok: true, status: live ? 'active' : 'none', is_member: live, next_charge: null, card: null, invoices: [] };
+    },
+
     async deleteAccount(confirmEmail) {
       const u = proto.read();
       if (!u || String(confirmEmail || '').trim().toLowerCase() !== String(u.email || '').toLowerCase()) {
@@ -402,7 +409,7 @@
       if (!uid) return null;
       const { data, error } = await sb
         .from('wallet_ledger')
-        .select('kind,minutes,chats,description,created_at')
+        .select('kind,seconds,minutes,chats,description,created_at')
         .eq('user_id', uid)
         .order('created_at', { ascending: false })
         .limit(limit);
@@ -438,6 +445,28 @@
         throw new Error(body?.message || body?.error || 'Could not start checkout. Please try again.');
       }
       return body.url;
+    },
+
+    // Asks the server to read this member's subscription from Stripe and apply
+    // it, so the app never waits on (or misses) Stripe's webhook. Used on the
+    // return from checkout, with the session id, and by the Billing page.
+    async syncMembership(sessionId) {
+      const { data: sess } = await sb.auth.getSession();
+      const token = sess?.session?.access_token;
+      if (!token) throw new Error('Your session has expired. Please sign in again.');
+      const res = await fetch(cfg.url.replace(/\/+$/, '') + '/functions/v1/sync-membership', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'apikey': cfg.anonKey,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(sessionId ? { session_id: sessionId } : {})
+      });
+      let body = null;
+      try { body = await res.json(); } catch (e) { /* non-JSON error page */ }
+      if (!res.ok || !body?.ok) throw new Error(body?.error || 'Could not check your membership. Please refresh.');
+      return body;
     },
 
     // Closes the account. The server cancels any Stripe subscription first and
@@ -620,6 +649,7 @@
     requestPasswordReset: impl.requestPasswordReset,
     updatePassword: impl.updatePassword,
     deleteAccount: impl.deleteAccount,
+    syncMembership: impl.syncMembership,
     activateTrial: impl.activateTrial,
 
     // Gate for Call / Text. Sends a non-subscriber to the subscription page
