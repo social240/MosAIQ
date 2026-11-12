@@ -296,47 +296,58 @@ p{margin:0}
 <div class="hero-stage">
 <!-- Two cuts of the same footage. The portrait file is framed for narrow
      screens, where the landscape one would be cropped to a thin slice.
-     Chrome/Safari pick the first matching <source>, so the portrait entry
-     comes first and is gated by the media query. -->
-<video class="hero-bg" autoplay muted loop playsinline preload="auto" aria-hidden="true">
-<source src="assets/portrait.mp4" media="(max-width:900px)" type="video/mp4">
-<source src="assets/jerusalem-dawn.mp4" type="video/mp4">
-</video>
+     The script below loads only the cut that fits the screen, and none at
+     all for visitors who ask for reduced motion or less data. -->
+<video class="hero-bg" autoplay muted loop playsinline preload="none" aria-hidden="true"></video>
 <script>
-// Keep the hero footage playing. Browsers block autoplay in some states, so
-// nudge it if the element comes back paused.
+// Hero footage: load one cut, keep it playing while it is on screen, and pause
+// it once the visitor scrolls past (saves battery and data on phones).
 (function(){
  try{
   var v=document.querySelector('.hero-bg'); if(!v)return;
   var mq=window.matchMedia?matchMedia('(max-width:900px)'):null;
+  var narrow=function(){ return !!(mq&&mq.matches); };
   // A still of the opening frame, matched to the cut, so there is a picture
-  // while the video loads -- and when it never autoplays at all.
-  var poster=function(){ v.poster=(mq&&mq.matches)?'assets/hero-poster-portrait.jpg':'assets/hero-poster.jpg'; };
+  // while the video loads -- and when it never plays at all.
+  var poster=function(){ v.poster=narrow()?'assets/hero-poster-portrait.jpg':'assets/hero-poster.jpg'; };
   poster();
-  var play=function(){ var p=v.play(); if(p&&p.catch)p.catch(function(){}); };
+  // Reduced motion, Data Saver or a 2G connection: keep the still, no video.
+  var net=navigator.connection||{};
+  if((window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)||net.saveData===true||/2g$/.test(net.effectiveType||'')){
+   if(mq&&mq.addEventListener)mq.addEventListener('change',poster);
+   return;
+  }
+  var cut=function(){ return narrow()?'assets/portrait.mp4':'assets/jerusalem-dawn.mp4'; };
+  v.preload='auto';
+  v.src=cut();
+  var onScreen=true;
+  var play=function(){ if(!onScreen||document.hidden)return; var p=v.play(); if(p&&p.catch)p.catch(function(){}); };
   play();
   v.addEventListener('loadeddata',play);
   v.addEventListener('canplay',play);
   // Browsers suspend background video on a hidden tab; resume on return.
   document.addEventListener('visibilitychange',function(){ if(!document.hidden)play(); });
+  // Pause while the hero is scrolled out of view; resume when it comes back.
+  if('IntersectionObserver' in window){
+   new IntersectionObserver(function(es){ onScreen=es[es.length-1].isIntersecting; if(onScreen)play(); else v.pause(); }).observe(v);
+  }
 
-  // iOS Low Power Mode and data-saver settings refuse autoplay but allow play()
-  // inside a user gesture, so start the footage on the first tap, click or key.
+  // iOS Low Power Mode refuses autoplay but allows play() inside a user
+  // gesture, so start the footage on the first tap, click or key.
   var gestures=['touchend','click','keydown'];
   var stop=function(){ gestures.forEach(function(t){ window.removeEventListener(t,kick,true); }); };
   var kick=function(){ if(v.paused)play(); else stop(); };
   gestures.forEach(function(t){ window.addEventListener(t,kick,true); });
   v.addEventListener('playing',stop);
 
-  // <source media> is only evaluated when the element first loads, so a resize
-  // or a device rotation would otherwise keep the wrong cut. Re-pick on change.
+  // A resize or a device rotation can call for the other cut. Re-pick on change.
   if(mq){
    var swap=function(){
-    var want=mq.matches?'assets/portrait.mp4':'assets/jerusalem-dawn.mp4';
+    var want=cut();
     if(v.currentSrc && v.currentSrc.indexOf(want)>-1)return;
     var at=v.currentTime||0;
     poster();
-    v.load();                       // re-evaluates the <source> list
+    v.src=want;
     v.addEventListener('loadeddata',function once(){
      v.removeEventListener('loadeddata',once);
      try{ v.currentTime=at % (v.duration||1); }catch(e){}
@@ -380,7 +391,7 @@ p{margin:0}
 
 <div class="band" aria-hidden="true"><div><span>ת</span><span class="g">ש</span><span>ר</span><span>ק</span><span>צ</span><span class="g">פ</span><span>ע</span><span>ס</span><span>נ</span><span class="g">מ</span><span>ל</span><span>כ</span><span>י</span><span class="g">ט</span><span>ח</span><span>ז</span><span>ו</span><span class="g">ה</span><span>ד</span><span>ג</span><span>ב</span><span class="g">א</span><span>ת</span><span class="g">ש</span><span>ר</span><span>ק</span><span>צ</span><span class="g">פ</span><span>ע</span><span>ס</span><span>נ</span><span class="g">מ</span><span>ל</span><span>כ</span><span>י</span><span class="g">ט</span><span>ח</span><span>ז</span><span>ו</span><span class="g">ה</span><span>ד</span><span>ג</span><span>ב</span><span class="g">א</span><span>ת</span><span class="g">ש</span><span>ר</span><span>ק</span><span>צ</span><span class="g">פ</span><span>ע</span><span>ס</span><span>נ</span><span class="g">מ</span><span>ל</span><span>כ</span><span>י</span><span class="g">ט</span><span>ח</span><span>ז</span><span>ו</span><span class="g">ה</span><span>ד</span><span>ג</span><span>ב</span><span class="g">א</span><span>ת</span><span class="g">ש</span><span>ר</span><span>ק</span><span>צ</span><span class="g">פ</span><span>ע</span><span>ס</span><span>נ</span><span class="g">מ</span><span>ל</span><span>כ</span><span>י</span><span class="g">ט</span><span>ח</span><span>ז</span><span>ו</span><span class="g">ה</span><span>ד</span><span>ג</span><span>ב</span><span class="g">א</span></div></div>
 
-<div id="about"><video class="bgphoto" src="assets/rabbi-lecture.mp4" poster="assets/rabbi-lecture-poster.jpg" autoplay muted loop playsinline preload="auto" aria-hidden="true"></video>
+<div id="about"><video class="bgphoto" data-src="assets/rabbi-lecture.mp4" poster="assets/rabbi-lecture-poster.jpg" muted loop playsinline preload="none" aria-hidden="true"></video>
 <section class="wrap">
 <div class="l">
 <span class="eyebrow">About Rabbi Mizrachi</span>
@@ -525,13 +536,23 @@ p{margin:0}
 <div class="legal"><p>AI Torah conversation grounded in Rabbi Yosef Mizrachi’s public teaching archive. RavMizAI is not Rabbi Mizrachi speaking live and does not replace a qualified rabbi for personal halachic rulings.</p><small>© 2026 RavMizAI. All rights reserved.</small></div>
 </div></footer>
 <script>
-// Background lecture video: play it slightly slowed, and hold it on the poster frame
-// for visitors who ask for reduced motion.
+// Background lecture video. It is faint, so it loads only when the About
+// section is about to scroll into view, plays slightly slowed, and pauses when
+// it leaves the screen. Reduced motion, Data Saver and 2G keep the poster.
 (function(){
  var v=document.querySelector('#about video.bgphoto'); if(!v)return;
+ var net=navigator.connection||{};
+ if((window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)||net.saveData===true||/2g$/.test(net.effectiveType||''))return;
  var slow=function(){v.defaultPlaybackRate=0.7;v.playbackRate=0.7};
- slow(); v.addEventListener('loadedmetadata',slow); v.addEventListener('play',slow);
- if(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches){v.removeAttribute('autoplay');v.pause()}
+ v.addEventListener('loadedmetadata',slow); v.addEventListener('play',slow);
+ var play=function(){
+  if(!v.getAttribute('src')){ v.preload='auto'; v.src=v.getAttribute('data-src'); }
+  slow(); var p=v.play(); if(p&&p.catch)p.catch(function(){});
+ };
+ if(!('IntersectionObserver' in window)){ play(); return; }
+ new IntersectionObserver(function(es){
+  if(es[es.length-1].isIntersecting)play(); else if(v.getAttribute('src'))v.pause();
+ },{rootMargin:'300px 0px'}).observe(v);
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script><script src="assets/supabase-config.js"></script><script src="assets/auth.js"></script><script src="assets/app.js"></script></body></html>
