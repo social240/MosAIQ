@@ -419,6 +419,16 @@ const FLASH_SAMPLER = () => {
       const who = p => p.evaluate(async () => (await window.RMAuth.currentUser())?.email || null).catch(() => null);
       let ctx = null, p;
       let afterRefresh, shown1, shown2, db, afterReopen, outAfterSignOut;
+      // With wallet limits off (client request) members see "Unlimited" instead
+      // of a balance, so make A a member for this step and expect that.
+      const limitsOn = /export const WALLET_LIMITS = true/.test(fs.readFileSync(path.join(HERE, '..', 'supabase', 'functions', '_shared', 'membership.ts'), 'utf8'));
+      if (!limitsOn) await sql(`update public.profiles set is_member = true, subscription_status = 'active', subscribed_until = now() + interval '1 day' where id = '${uuid(idA)}'`);
+      // The wallet script has run once its note changes from the page's
+      // placeholder ("independent balances"), or a balance number appears.
+      const walletReady = () => p.waitForFunction(() => {
+        const n = document.querySelector('#walletNote'), m = document.querySelector('#walletMinutes');
+        return (n && !/independent balances/.test(n.textContent)) || (m && /\d/.test(m.textContent));
+      }, null, { timeout: 15000 });
       try {
         ctx = await open(); p = ctx.pages()[0] || await ctx.newPage();
         await p.goto(`${SITE}/login`);
@@ -428,12 +438,12 @@ const FLASH_SAMPLER = () => {
         await p.reload(); await p.waitForTimeout(2500);
         afterRefresh = await who(p);
         await p.goto(`${SITE}/app/wallet.html`);
-        await p.waitForFunction(() => { const e = document.querySelector('#walletMinutes'); return e && /\d/.test(e.textContent); }, null, { timeout: 15000 });
+        await walletReady();
         shown1 = (await p.textContent('#walletMinutes')).trim();
         await p.reload();
-        await p.waitForFunction(() => { const e = document.querySelector('#walletMinutes'); return e && /\d/.test(e.textContent); }, null, { timeout: 15000 });
+        await walletReady();
         shown2 = (await p.textContent('#walletMinutes')).trim();
-        db = fmtDuration((await wallet(idA)).s);
+        db = limitsOn ? fmtDuration((await wallet(idA)).s) : 'Unlimited';
         await ctx.close(); ctx = null;
         ctx = await open(); p = ctx.pages()[0] || await ctx.newPage();
         await p.goto(`${SITE}/app/home.html`); await p.waitForTimeout(3000);
@@ -456,7 +466,8 @@ const FLASH_SAMPLER = () => {
       record('5', 'Staying signed in (refresh, close, reopen)', afterRefresh === A && afterReopen === A && outAfterSignOut ? 'PASS' : 'FAIL',
         `signed in -> after refresh: ${afterRefresh === A ? 'still signed in' : 'signed out'}; after closing and reopening the browser: ${afterReopen === A ? 'still signed in' : 'signed out'}; after "Sign out" and reopening: ${outAfterSignOut ? 'signed out' : 'STILL SIGNED IN'}. Sessions have no time limit (${cfg.sessions_timebox ? 'timebox set' : 'no timebox'}, ${cfg.sessions_inactivity_timeout ? 'inactivity timeout set' : 'no inactivity timeout'}).`);
       record('A10', 'Wallet: balance after refresh', shown1 === db && shown2 === db ? 'PASS' : 'FAIL',
-        `wallet page shows ${shown1}, after refresh ${shown2}; database holds ${db}`);
+        limitsOn ? `wallet page shows ${shown1}, after refresh ${shown2}; database holds ${db}`
+                 : `limits are off, so a member's wallet page should say "Unlimited": shows "${shown1}", after refresh "${shown2}"`);
     });
 
     // S1. Security headers and third-party code ---------------------------------------
