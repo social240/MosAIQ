@@ -467,10 +467,32 @@ function setupVerify(){
   }catch(err){showErr(RMAuth.friendly(err));}
  };
 }
+// The home page's "Start 7-day trial" email boxes. The address used to travel
+// as ?email=…, which left it in browser history and the host's access logs.
+// It is handed over in sessionStorage instead. The inputs have no name, so even
+// a submit without this script reaches the trial page without the address.
+function setupTrialHandoff(){
+ $$('form.signup[action$="free-trial.html"],form.signup[action$="free-trial"]').forEach(f=>{
+  f.addEventListener('submit',e=>{
+   e.preventDefault();
+   const email=String(f.querySelector('input[type=email]')?.value||'').trim();
+   try{ if(email)sessionStorage.setItem('rm_trial_email',email.slice(0,254)); }catch(err){}
+   location.href=f.getAttribute('action');
+  });
+ });
+}
 function setupTrial(){
  const f=$('#trialSignup'); if(!f)return;
- // The home page's email box sends visitors here as ?email=…; carry it over.
- const pre=new URLSearchParams(location.search).get('email');
+ // Carry over the address typed on the home page (setupTrialHandoff). Older
+ // links may still carry ?email=…: use it, then drop it from the address bar
+ // so it does not stay in the history.
+ let pre=null; try{pre=sessionStorage.getItem('rm_trial_email');sessionStorage.removeItem('rm_trial_email')}catch(e){}
+ const qs=new URLSearchParams(location.search);
+ if(qs.has('email')){
+  pre=pre||qs.get('email'); qs.delete('email');
+  const rest=qs.toString();
+  try{ history.replaceState(history.state,'',location.pathname+(rest?'?'+rest:'')+location.hash); }catch(e){}
+ }
  if(pre&&f.email&&!f.email.value)f.email.value=pre.trim().slice(0,254);
  f.addEventListener('submit',async e=>{
   e.preventDefault();clearMsg();const d=Object.fromEntries(new FormData(f));
@@ -881,5 +903,5 @@ document.addEventListener('DOMContentLoaded',()=>{
   }
   return;
  }
- setupForgot();setupReset();setupLogin();setupGoogle();setupSignup('#signupForm');setupVerify();setupTrial();setupPayment();appInit();publicNavInit();
+ setupForgot();setupReset();setupLogin();setupGoogle();setupSignup('#signupForm');setupVerify();setupTrialHandoff();setupTrial();setupPayment();appInit();publicNavInit();
 });
