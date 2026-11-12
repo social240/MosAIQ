@@ -550,6 +550,12 @@ async function appInit(){
  });
 
  const page=pageName();
+ // Signed in, so the page can show (styles.css hides member pages until
+ // .authReady) -- now, unless it may still redirect once membership is known:
+ // the conversation pages, subscribe, and home right after a Google signup,
+ // which goes on to checkout. Those show after the checks below.
+ let pendingIntent=null; try{pendingIntent=localStorage.getItem('rm_oauth_intent')}catch(e){}
+ if(!MEMBER_ONLY.includes(page)&&page!=='subscribe'&&pendingIntent!=='signup')document.body.classList.add('authReady');
  const subscribed=await RMAuth.isSubscribed();
 
  // Just signed up with Google from the signup page: go on to checkout, as an
@@ -569,6 +575,7 @@ async function appInit(){
  // Already a member? Nothing to sell — send them to the conversation.
  if(page==='subscribe'&&subscribed){location.href='call-intro.html';return}
 
+ document.body.classList.add('authReady');
  document.body.classList.toggle('isSubscribed',subscribed);
  setupSubscribeGate(subscribed);
  setupCheckoutButton();

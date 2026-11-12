@@ -160,6 +160,13 @@ textarea.input{height:120px;padding-top:14px}
 
 /* member app */
 .appBody{background:var(--tint);color:var(--navy);min-height:100vh}
+/* Member pages stay hidden until appInit has confirmed a session (it adds
+   .authReady). Otherwise a signed-out visitor saw the member page for a moment
+   before being sent to login -- e.g. after cancelling Google sign-in, which
+   returns to the member home -- and it looked like being signed in and then
+   straight out. If the script never runs, the page still shows after 4s. */
+.appBody:not(.authReady){visibility:hidden;animation:authReveal 0s 4s forwards}
+@keyframes authReveal{to{visibility:visible}}
 .appTop{min-height:72px;border-bottom:1px solid var(--line);display:flex;align-items:center;position:sticky;top:0;z-index:50;background:rgba(255,255,255,.96);backdrop-filter:blur(12px)}
 .appNav{display:flex;justify-content:space-between;align-items:center;gap:16px}
 .appTop .brand img{height:42px}
