@@ -1,0 +1,7 @@
+# RavMizAI
+# The member area and the email templates are not for search results.
+User-agent: *
+Disallow: /app/
+Disallow: /email/
+
+Sitemap: https://ravmizaii.netlify.app/sitemap.xml
