@@ -21,6 +21,15 @@
   })();
   const siteUrl = (path) => new URL(path, SITE_ROOT).href;
 
+  // Google's own sign-in button (Google Identity Services) is used only where
+  // Google allows it: the OAuth client lists the address as an authorised
+  // JavaScript origin, and Google refuses to draw the button anywhere else
+  // (local testing, deploy previews), so those keep the redirect flow. The
+  // client ID is public by design; it appears in every Google sign-in URL.
+  const GOOGLE_CLIENT_ID = cfg.googleClientId
+    || '195314834216-tt1hjcrkbqr3r9qaoheogq5nk7fgpicm.apps.googleusercontent.com';
+  const GOOGLE_BUTTON_ORIGINS = ['https://ravmizaii.netlify.app'];
+
   let sb = null;
   if (LIVE) {
     sb = window.supabase.createClient(cfg.url, cfg.anonKey, {
@@ -62,6 +71,17 @@
     const first = String(m.first_name || m.given_name || (sp > 0 ? full.slice(0, sp) : full)).trim();
     const last = String(m.last_name || m.family_name || (sp > 0 ? full.slice(sp + 1) : '')).trim();
     return { first, last };
+  }
+
+  // One-time value tying Google's ID token to this page. Google embeds the
+  // SHA-256 of `raw` in the token, and Supabase checks it against `raw`, so a
+  // token obtained elsewhere cannot be replayed here.
+  async function googleNonce() {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    const raw = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
+    const hashed = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+    return { raw, hashed };
   }
 
   // Password policy, enforced client-side for fast feedback. Supabase enforces
@@ -117,6 +137,9 @@
 
     // There is no Google round trip without a backend to come back to.
     async signInWithGoogle() {
+      throw new Error('Google sign-in needs the live backend.');
+    },
+    async signInWithGoogleIdToken() {
       throw new Error('Google sign-in needs the live backend.');
     },
 
@@ -272,6 +295,18 @@
       });
       if (error) throw error;
       return data;   // the browser is already on its way to Google
+    },
+
+    // Google's own button hands the page an ID token directly; Supabase checks
+    // it (audience = our client ID, nonce) and starts the session. Google never
+    // sends the visitor to the Supabase project, so its screen names this site
+    // rather than <project>.supabase.co. First sign-in creates the account, and
+    // handle_new_user provisions the profile and wallet as for the redirect flow.
+    async signInWithGoogleIdToken({ token, nonce }) {
+      const { data, error } = await sb.auth.signInWithIdToken({ provider: 'google', token, nonce });
+      if (error) throw error;
+      if (!data?.session) throw new Error('Google sign-in did not return a session.');
+      return data;
     },
 
     // Whether an external provider is switched on for this project. Reads the
@@ -533,6 +568,11 @@
     resend: impl.resend,
     signOut: impl.signOut,
     signInWithGoogle: impl.signInWithGoogle,
+    signInWithGoogleIdToken: impl.signInWithGoogleIdToken,
+    providerEnabled: impl.providerEnabled || (async () => false),
+    googleNonce,
+    // Empty where Google's own button cannot be used; see GOOGLE_BUTTON_ORIGINS.
+    googleClientId: LIVE && GOOGLE_BUTTON_ORIGINS.includes(location.origin) ? GOOGLE_CLIENT_ID : '',
     currentUser: impl.currentUser,
     profile: impl.profile || (async () => null),
     wallet: impl.wallet || (async () => null),

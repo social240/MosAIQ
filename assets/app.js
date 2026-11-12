@@ -315,6 +315,62 @@ function setupGoogle(){
   });
   // Back from Google through the back/forward cache: no longer busy.
   window.addEventListener('pageshow',e=>{ if(e.persisted)reset(); });
+  upgradeGoogleButton(btn);
+ });
+}
+
+// Where Google allows it (RMAuth.googleClientId), swap in Google's own button.
+// The redirect flow above goes through the Supabase project, so Google's screen
+// said "Sign in to <project>.supabase.co"; with Google's button the page gets
+// the ID token directly and the screen names this site. The redirect button
+// stays until Google's is drawn, and remains if Google's script cannot load or
+// Google sign-in is switched off.
+async function upgradeGoogleButton(btn){
+ const clientId=RMAuth.googleClientId; if(!clientId)return;
+ const intent=btn.dataset.google;
+ let nonce;
+ try{
+  if(!(await RMAuth.providerEnabled('google')))return;
+  nonce=await RMAuth.googleNonce();
+  await loadScript('https://accounts.google.com/gsi/client',8000);
+ }catch(e){ return; }
+ const gid=window.google&&google.accounts&&google.accounts.id; if(!gid)return;
+ const slot=document.createElement('div'); slot.className='gsiSlot';
+ gid.initialize({
+  client_id:clientId, nonce:nonce.hashed, ux_mode:'popup', auto_select:false,
+  context:intent==='signup'?'signup':'signin', itp_support:true,
+  callback:async({credential})=>{
+   clearMsg(); slot.setAttribute('aria-busy','true');
+   try{
+    await RMAuth.signInWithGoogleIdToken({token:credential,nonce:nonce.raw});
+    // From the signup page a new member goes on to checkout, as an email
+    // signup does (appInit reads this once on the member home page).
+    try{ if(intent==='signup')localStorage.setItem('rm_oauth_intent','signup'); else localStorage.removeItem('rm_oauth_intent'); }catch(e){}
+    await RMAuth.syncLegacyUser();
+    location.href='app/home.html';
+   }catch(err){
+    // friendly() is tuned for email codes ("That code is not correct"), which
+    // would mislead here; only a network failure gets its wording.
+    console.warn('[RavMizAI] Google sign-in failed:',err?.message);
+    const m=String(err?.message||'').toLowerCase();
+    showErr(/failed to fetch|networkerror/.test(m)?RMAuth.friendly(err):'Google sign-in did not go through. Please try again, or continue with email.');
+    slot.removeAttribute('aria-busy');
+   }
+  }
+ });
+ const width=Math.round(btn.getBoundingClientRect().width)||320;
+ btn.before(slot);
+ gid.renderButton(slot,{type:'standard',theme:'outline',size:'large',shape:'pill',text:'continue_with',logo_alignment:'center',locale:'en',width:Math.max(200,Math.min(400,width))});
+ btn.hidden=true;
+}
+
+function loadScript(src,timeout=8000){
+ return new Promise((resolve,reject)=>{
+  const s=document.createElement('script'); s.src=src; s.async=true;
+  const t=setTimeout(()=>reject(new Error('timed out loading '+src)),timeout);
+  s.onload=()=>{clearTimeout(t);resolve()};
+  s.onerror=()=>{clearTimeout(t);reject(new Error('could not load '+src))};
+  document.head.appendChild(s);
  });
 }
 

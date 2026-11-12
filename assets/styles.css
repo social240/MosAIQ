@@ -119,6 +119,11 @@ textarea.input{height:120px;padding-top:14px}
 .divider:before,.divider:after{content:"";height:1px;background:var(--line);flex:1}
 .googleBtn{gap:12px}
 .googleBtn .gLogo{width:20px;height:20px;flex:none}
+/* Google's own button (drawn by Google in an iframe, at most 400px wide) takes
+   the fallback button's place. .btn sets display, so [hidden] needs help. */
+.gsiSlot{display:flex;justify-content:center;min-height:44px}
+.gsiSlot[aria-busy="true"]{opacity:.55;pointer-events:none}
+.googleBtn[hidden]{display:none}
 .oauthNote{font-size:12px;color:var(--muted);text-align:center;margin:12px 0 0;line-height:1.5}
 .oauthNote a{color:var(--gold2)}
 .passwordRules{font-size:13px;color:var(--muted);display:grid;gap:3px;margin:-6px 0 16px}
