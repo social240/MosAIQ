@@ -1,0 +1,12 @@
+{
+  "name": "ravmizai-tests",
+  "private": true,
+  "type": "module",
+  "description": "Automated sign-in, access-control and wallet tests against the live RavMizAI site",
+  "scripts": {
+    "test": "node run-auth-wallet-tests.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.61.1"
+  }
+}

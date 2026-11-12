@@ -7,5 +7,9 @@
 assets/supabase-config.js
 
 node_modules/
+
+# Reports written by each test run (tests/reports/run-<date>-<run>.json).
+tests/reports/
+
 .DS_Store
 Thumbs.db
