@@ -140,6 +140,7 @@ textarea.input{height:120px;padding-top:14px}
 .legalWrap{width:min(860px,calc(100% - 40px));margin:auto;padding:72px 0 110px}
 .legal h1{font-family:var(--serif);font-weight:400;font-size:clamp(40px,5vw,58px);line-height:1.06;margin:0 0 8px}
 .legal h2{font-family:var(--serif);font-weight:400;font-size:24px;line-height:1.25;margin:36px 0 10px}
+.legal h3{font-size:17px;font-weight:700;line-height:1.35;margin:24px 0 6px}
 .legal p,.legal li{font-size:16px;line-height:1.75;color:var(--muted)}
 .legal .note{padding:16px 18px;border-radius:12px;background:#FBF4E2;border:1px solid #EBD39A;color:#5E460C;margin:20px 0}
 .legal a{color:var(--accent)}
