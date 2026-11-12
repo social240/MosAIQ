@@ -1,102 +1,105 @@
 // RavMizAI — record-usage
 //
-// Debits a member's wallet after a conversation. Voice is charged in seconds,
-// so a 40-second call costs 40 seconds rather than a rounded minute.
+// Charges a member's wallet for a finished conversation. Voice is charged in
+// seconds, so a 40-second call costs 40 seconds rather than a rounded minute.
 //
-// The caller is identified from their own JWT, never from the request body:
-// otherwise a page could charge, or credit, someone else's wallet. The page
-// may say how much was used, but not who used it.
+// Server to server only. How long a call lasted must come from the system that
+// ran it (Delphi, once it reports session length -- see USAGE-TRACKING.md),
+// never from a member's browser, which could simply report less. So the caller
+// must present the service-role key, and a member's own token is refused.
+// Balances are written only by record_usage() in the database, which is
+// service-role only too.
 //
-// The browser cannot write the wallet directly — RLS has no insert/update
-// policy on wallets or wallet_ledger, and record_usage() is service-role only.
-// This function holds the service key and is the only way through.
+//   POST /functions/v1/record-usage
+//   Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>
+//   { "user_id": "<uuid>", "call_id": "<unique id from the call system>",
+//     "seconds": 40, "chats": 0, "description": "Voice call" }
+//
+//   -> { ok, seconds_left, chats_left, charged_seconds, overage_seconds, duplicate }
+//
+// call_id makes a report count once: the same call sent twice (a retry, a
+// duplicate webhook) is charged once. Charges stop at zero; anything beyond the
+// balance comes back as overage_seconds and is noted on the ledger row, so the
+// history still adds up to the balance.
 //
 // Deploy:
 //   npx supabase functions deploy record-usage
-//
-// NOTE: nothing calls this yet. The conversation runs inside Delphi's embedded
-// iframe, which does not report session length back to the page. Until Delphi
-// exposes session events (a webhook, or a JS API on the embed), there is no
-// trustworthy source for the seconds to send here. See USAGE-TRACKING.md.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { ...CORS, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
   });
 
 // A single call cannot plausibly exceed this; a larger number means a bug or a
 // tampered request, and silently draining a wallet would be worse than failing.
 const MAX_SECONDS = 4 * 60 * 60;   // 4 hours
 const MAX_CHATS = 500;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CALL_ID = /^[A-Za-z0-9._:-]{1,100}$/;
+
+// Constant-time compare, so the key cannot be guessed byte by byte from timing.
+function safeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
   const url = Deno.env.get('SUPABASE_URL');
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  if (!url || !anonKey || !serviceKey) {
-    console.error('missing env: SUPABASE_URL / ANON / SERVICE_ROLE');
+  if (!url || !serviceKey) {
+    console.error('missing env: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY');
     return json({ error: 'Server is not configured.' }, 500);
   }
 
-  // 1. Who is calling?
-  const authHeader = req.headers.get('Authorization') ?? '';
-  if (!authHeader.startsWith('Bearer ')) return json({ error: 'Not signed in.' }, 401);
-
-  const asCaller = createClient(url, anonKey, {
-    global: { headers: { Authorization: authHeader } },
-    auth: { persistSession: false },
-  });
-  const { data: userData, error: userErr } = await asCaller.auth.getUser();
-  if (userErr || !userData?.user) {
-    return json({ error: 'Your session has expired. Please sign in again.' }, 401);
+  // 1. Only the backend may report usage.
+  const auth = req.headers.get('Authorization') ?? '';
+  if (!safeEqual(auth, 'Bearer ' + serviceKey)) {
+    return json({ error: 'Usage is recorded by the server, not the browser.' }, 403);
   }
 
-  // 2. What are they reporting?
+  // 2. Whose call, which call, how much.
   let body: any = {};
-  try { body = await req.json(); } catch { /* empty body is fine */ }
+  try { body = await req.json(); } catch { /* validated below */ }
 
+  const userId = String(body?.user_id ?? '');
+  const callId = String(body?.call_id ?? '');
   const seconds = Math.floor(Number(body?.seconds ?? 0));
   const chats = Math.floor(Number(body?.chats ?? 0));
 
+  if (!UUID.test(userId)) return json({ error: 'user_id must be the member\'s id.' }, 400);
+  if (!CALL_ID.test(callId)) return json({ error: 'call_id is required (letters, digits, . _ : -, up to 100).' }, 400);
   if (!Number.isFinite(seconds) || !Number.isFinite(chats) || seconds < 0 || chats < 0) {
     return json({ error: 'Invalid usage amount.' }, 400);
   }
   if (seconds > MAX_SECONDS || chats > MAX_CHATS) {
-    console.warn('implausible usage rejected:', userData.user.id, seconds, chats);
+    console.warn('implausible usage rejected:', userId, callId, seconds, chats);
     return json({ error: 'Usage amount out of range.' }, 400);
-  }
-  if (seconds === 0 && chats === 0) {
-    return json({ ok: true, skipped: true });
   }
 
   // A short label, for the ledger row the member sees.
   const raw = typeof body?.description === 'string' ? body.description.trim() : '';
-  const description = (raw || (seconds ? 'Voice usage' : 'Text messages')).slice(0, 80);
+  const description = (raw || (seconds ? 'Voice call' : 'Text messages')).slice(0, 80);
 
-  // 3. Debit, with the service role.
+  // 3. Charge, once per call.
   const admin = createClient(url, serviceKey, { auth: { persistSession: false } });
   const { data, error } = await admin.rpc('record_usage', {
-    p_user_id: userData.user.id,
+    p_user_id: userId,
     p_seconds: seconds,
     p_chats: chats,
     p_description: description,
+    p_ref: 'usage:' + callId,
   });
 
   if (error) {
     console.error('record_usage failed:', error.message);
-    return json({ error: 'Could not record usage.' }, 500);
+    return json({ error: 'Could not record usage.' }, /no wallet/i.test(error.message) ? 404 : 500);
   }
 
   const row = Array.isArray(data) ? data[0] : data;
@@ -104,5 +107,8 @@ Deno.serve(async (req) => {
     ok: true,
     seconds_left: row?.seconds_left ?? null,
     chats_left: row?.chats_left ?? null,
+    charged_seconds: row?.charged_seconds ?? 0,
+    overage_seconds: row?.overage_seconds ?? 0,
+    duplicate: !!row?.duplicate,
   });
 });

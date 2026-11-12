@@ -339,3 +339,16 @@ a.rec:active{transform:translateX(1px)}
 a.rec:focus-visible{outline:2px solid var(--gold-d);outline-offset:2px}
 a.rec span{transition:transform .15s}
 a.rec:hover span{transform:translateX(3px)}
+
+/* Preferences: delete account. Kept apart from the form above and in the
+   danger colour, so it cannot be mistaken for a save button. */
+.dangerZone{max-width:900px;margin-top:56px;padding-top:24px;border-top:1px solid var(--line)}
+.dangerZone h3{color:var(--danger)}
+.dangerZone .appSub{max-width:640px}
+.dangerOutline{color:var(--danger);border-color:#F3B8BE}
+.dangerOutline:hover{background:#FDECEE;color:var(--danger)}
+.dangerZone form{max-width:480px;margin-top:14px}
+.dangerZone .error{margin-top:10px}
+.dangerActions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+.btn[aria-busy="true"]{opacity:.6;pointer-events:none}
+.dangerZone [hidden]{display:none!important}

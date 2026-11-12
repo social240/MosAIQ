@@ -135,6 +135,15 @@
     async resend() { localStorage.setItem('rm_verify_code', '111111'); return true; },
     async signOut() { localStorage.removeItem('rm_user'); return true; },
 
+    async deleteAccount(confirmEmail) {
+      const u = proto.read();
+      if (!u || String(confirmEmail || '').trim().toLowerCase() !== String(u.email || '').toLowerCase()) {
+        throw new Error('Type the email address of this account to confirm.');
+      }
+      localStorage.removeItem('rm_user');
+      return true;
+    },
+
     // There is no Google round trip without a backend to come back to.
     async signInWithGoogle() {
       throw new Error('Google sign-in needs the live backend.');
@@ -431,6 +440,34 @@
       return body.url;
     },
 
+    // Closes the account. The server cancels any Stripe subscription first and
+    // deletes the account (and its data) only if that worked. The member must
+    // type their own email address; the server checks it against the session.
+    async deleteAccount(confirmEmail) {
+      const { data: sess } = await sb.auth.getSession();
+      const token = sess?.session?.access_token;
+      if (!token) throw new Error('Your session has expired. Please sign in again.');
+
+      const res = await fetch(cfg.url.replace(/\/+$/, '') + '/functions/v1/delete-account', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'apikey': cfg.anonKey,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ confirm: String(confirmEmail || '').trim() })
+      });
+      let body = null;
+      try { body = await res.json(); } catch (e) { /* non-JSON error page */ }
+      if (!res.ok || !body?.ok) {
+        throw new Error(body?.error || 'The account could not be deleted. Please try again.');
+      }
+      // The account no longer exists, so only the local session is left to end.
+      try { await sb.auth.signOut({ scope: 'local' }); } catch (e) { /* already gone */ }
+      localStorage.removeItem('rm_user');
+      return true;
+    },
+
     // Sends a password-reset email. The caller always reports success, whether
     // or not the address is registered -- otherwise this page becomes a way to
     // discover which emails have accounts.
@@ -582,6 +619,7 @@
     billingPortal: impl.billingPortal,
     requestPasswordReset: impl.requestPasswordReset,
     updatePassword: impl.updatePassword,
+    deleteAccount: impl.deleteAccount,
     activateTrial: impl.activateTrial,
 
     // Gate for Call / Text. Sends a non-subscriber to the subscription page

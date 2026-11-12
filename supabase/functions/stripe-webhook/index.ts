@@ -1,7 +1,9 @@
 // RavMizAI — stripe-webhook
 //
-// The only thing that grants or revokes membership. Stripe calls this when a
-// subscription is created, renewed, updated or cancelled.
+// The only thing that grants or revokes membership, and the only thing that
+// funds wallets (trial allowance, then voice reset to 3 hours each paid
+// period). Stripe calls this when a subscription is created, renewed, updated
+// or cancelled.
 //
 // Two defences matter here:
 //
@@ -58,6 +60,43 @@ async function verify(body: string, header: string, secret: string): Promise<boo
 
 const iso = (unix: unknown) =>
   typeof unix === 'number' && unix > 0 ? new Date(unix * 1000).toISOString() : null;
+
+// The current billing period. Newer Stripe API versions moved
+// current_period_start/end from the subscription onto its items, so read both.
+const periodStart = (sub: any) =>
+  iso(sub?.current_period_start ?? sub?.items?.data?.[0]?.current_period_start);
+
+// When access ends: the trial end while trialing, otherwise the paid period's
+// end. trial_end stays on the subscription after the trial converts, so using
+// it for a paying member would end their access at their first charge
+// (is_subscribed() requires subscribed_until to be in the future).
+const accessEnd = (sub: any, status: string) =>
+  status === 'trialing'
+    ? iso(sub?.trial_end)
+    : iso(sub?.current_period_end ?? sub?.items?.data?.[0]?.current_period_end);
+
+// supabase-js returns errors instead of throwing. Throwing here makes the
+// handler answer 500, so Stripe retries instead of the event being lost.
+async function call(admin: any, fn: string, args: Record<string, unknown>) {
+  const { data, error } = await admin.rpc(fn, args);
+  if (error) throw new Error(`${fn}: ${error.message}`);
+  return data;
+}
+
+// Funds the wallet: the trial allowance once, then 3 hours each paid period
+// (the amounts live in apply_stripe_allowance, sql/010). Each grant is keyed
+// on the subscription and period, so retries and repeated events add nothing.
+async function fundWallet(admin: any, sub: any, status: string, userId: string | null) {
+  const rows = await call(admin, 'apply_stripe_allowance', {
+    p_customer_id: sub.customer,
+    p_subscription_id: sub.id,
+    p_status: status,
+    p_period_start: periodStart(sub),
+    p_user_id: userId,
+  });
+  const r = Array.isArray(rows) ? rows[0] : rows;
+  if (r?.out_applied) console.log('wallet funded:', r.out_what, sub.id);
+}
 
 // Records the brand and last four digits of the card now on file, so the
 // billing page can show something real. Nothing sensitive is stored, and a
@@ -159,32 +198,48 @@ Deno.serve(async (req) => {
         const sub = await res.json();
         if (!res.ok) throw new Error(sub?.error?.message || 'subscription fetch failed');
 
-        await admin.rpc('apply_stripe_subscription', {
+        await call(admin, 'apply_stripe_subscription', {
           p_customer_id: sub.customer,
           p_subscription_id: sub.id,
           p_status: sub.status,
-          p_period_end: iso(sub.trial_end ?? sub.current_period_end),
+          p_period_end: accessEnd(sub, sub.status),
           p_user_id: userId,
         });
+        await fundWallet(admin, sub, sub.status, userId);
         await refreshCardSummary(admin, stripeKey, sub.customer);
         console.log('checkout completed:', sub.id, sub.status);
         break;
       }
 
       // Trial converted, renewed, upgraded, paused, cancelled -- all arrive here.
+      // A renewal arrives as subscription.updated with the new period.
       case 'customer.subscription.created':
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
-        const status = event.type.endsWith('deleted') ? 'canceled' : obj.status;
-        await admin.rpc('apply_stripe_subscription', {
-          p_customer_id: obj.customer,
-          p_subscription_id: obj.id,
-          p_status: status,
-          p_period_end: iso(obj.trial_end ?? obj.current_period_end),
-          p_user_id: obj.metadata?.supabase_user_id ?? null,
-        });
-        // A card change in the Billing Portal arrives as subscription.updated.
-        if (!event.type.endsWith('deleted')) {
+        const deleted = event.type.endsWith('deleted');
+        const status = deleted ? 'canceled' : obj.status;
+        const userId = obj.metadata?.supabase_user_id ?? null;
+        try {
+          await call(admin, 'apply_stripe_subscription', {
+            p_customer_id: obj.customer,
+            p_subscription_id: obj.id,
+            p_status: status,
+            p_period_end: accessEnd(obj, status),
+            p_user_id: userId,
+          });
+        } catch (e) {
+          // delete-account cancels the subscription and then deletes the
+          // member, so this cancellation can arrive for a profile that no
+          // longer exists. Nothing is left to update.
+          if (deleted && /No profile|violates foreign key/i.test((e as Error).message)) {
+            console.log('subscription canceled for a deleted account:', obj.id);
+            break;
+          }
+          throw e;
+        }
+        if (!deleted) {
+          await fundWallet(admin, obj, status, userId);
+          // A card change in the Billing Portal arrives as subscription.updated.
           await refreshCardSummary(admin, stripeKey, obj.customer);
         }
         console.log('subscription', status, obj.id);
@@ -195,7 +250,7 @@ Deno.serve(async (req) => {
       // past_due, but acting here closes the gap sooner.
       case 'invoice.payment_failed': {
         if (!obj.subscription) break;
-        await admin.rpc('apply_stripe_subscription', {
+        await call(admin, 'apply_stripe_subscription', {
           p_customer_id: obj.customer,
           p_subscription_id: obj.subscription,
           p_status: 'past_due',

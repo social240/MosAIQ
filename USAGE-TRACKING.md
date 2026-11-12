@@ -42,17 +42,35 @@ no write access to `wallets` or `wallet_ledger` either.
 
 `supabase/functions/record-usage/index.ts` — deployed.
 
-Identifies the caller from their own JWT, never from the request body, so a
-page cannot charge or credit someone else's wallet. Rejects negative and
-implausible amounts (over 4 hours, over 500 chats).
+**Server to server only** (since 2026-11-13). How long a call lasted must come
+from the system that ran it, not from the member's browser, which could simply
+report less. The caller must present the service-role key; a member's token
+gets 403. Rejects negative and implausible amounts (over 4 hours, over 500
+chats).
 
 ```
 POST /functions/v1/record-usage
-Authorization: Bearer <user jwt>
-{ "seconds": 40, "chats": 0, "description": "Voice usage" }
+Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>
+{ "user_id": "<uuid>", "call_id": "<id from the call system>",
+  "seconds": 40, "chats": 0, "description": "Voice call" }
 
--> { "ok": true, "seconds_left": 3560, "chats_left": 120 }
+-> { "ok": true, "seconds_left": 3560, "chats_left": 120,
+     "charged_seconds": 40, "overage_seconds": 0, "duplicate": false }
 ```
+
+- `call_id` makes each call count once (`wallet_ledger.ref` is unique), so a
+  retried or duplicated report is not charged twice.
+- A call longer than the balance is charged down to zero; the rest comes back
+  as `overage_seconds` and is noted on the ledger row, so the history always
+  adds up to the balance (`sql/010`).
+
+### Funding (since 2026-11-13)
+
+The Stripe webhook calls `apply_stripe_allowance()` on every subscription
+event (`sql/010`): **trial** +60 minutes and +120 chats, once; **each paid
+period** voice is reset to 3 hours, and unused time expires as its own ledger
+row (`kind = 'expire'`). Each grant is keyed on the subscription and period,
+so repeated events add nothing. app/subscribe.html states these rules.
 
 ## What is still blocked
 

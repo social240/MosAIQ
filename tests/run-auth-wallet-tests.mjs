@@ -31,7 +31,7 @@ const mail = tag => `autotest+${RUN}.${tag}@${DOMAIN}`;
 const NOBODY = `nobody-${RUN}@${DOMAIN}`;
 const APP_PAGES = ['home', 'wallet', 'billing', 'preferences', 'subscribe', 'call-intro', 'chat'];
 const ADMIN_FUNCTIONS = ['set_subscription', 'grant_credit', 'record_usage', 'start_trial', 'expire_trials',
-  'apply_stripe_subscription', 'link_stripe_customer', 'set_card_summary'];
+  'apply_stripe_subscription', 'link_stripe_customer', 'set_card_summary', 'apply_allowance', 'apply_stripe_allowance'];
 
 function fromDotEnv(key) {
   try {
@@ -92,12 +92,25 @@ const uuid = s => { if (!/^[0-9a-f-]{36}$/.test(String(s))) throw new Error('une
 const wallet = async id => one(`select seconds_balance::int as s, chats_balance::int as c from public.wallets where user_id = '${uuid(id)}'`);
 const ledgerRows = async id => (await one(`select count(*)::int as n from public.wallet_ledger where user_id = '${uuid(id)}'`)).n;
 const credit = (id, secs) => sql(`select * from public.grant_credit('${uuid(id)}'::uuid, ${Number(secs) | 0}, 0, 'autotest credit')`);
+// The service-role key: what the backend uses. Fetched for this run only, never printed.
 let SERVICE = '';
-async function resetLink(email) {
+async function serviceKey() {
   if (!SERVICE) {
     const keys = await mgmt(`/projects/${REF}/api-keys?reveal=true`);
     SERVICE = (keys.find(k => k.name === 'service_role') || {}).api_key || '';
+    if (!SERVICE) throw new Error('could not read the service-role key');
   }
+  return SERVICE;
+}
+// Reports usage the way the backend (the voice provider's server) would.
+const reportUsage = async (user, callId, seconds, description) =>
+  edge('record-usage', await serviceKey(), { user_id: user, call_id: `autotest-${RUN}-${callId}`, seconds, description });
+// Voice and chats should add up: grants minus charges and expiries = balance.
+const ledgerTotal = async id => (await one(`select coalesce(sum(case when kind in ('debit','expire') then -seconds else seconds end), 0)::int as s from public.wallet_ledger where user_id = '${uuid(id)}'`)).s;
+// What the Stripe webhook calls for each subscription event (sql/010).
+const stripeAllowance = (id, sub, status, periodStart) => sql(`select * from public.apply_stripe_allowance(null, '${sub}', '${status}', ${periodStart ? `'${periodStart}'::timestamptz` : 'null'}, '${uuid(id)}'::uuid)`);
+async function resetLink(email) {
+  await serviceKey();
   const r = await api('/auth/v1/admin/generate_link', { method: 'POST', key: SERVICE, body: { type: 'recovery', email, redirect_to: `${SITE}/reset-password.html` } });
   const p = (r.data && (r.data.properties || r.data)) || {};
   return { status: r.status, action: p.action_link, hash: p.hashed_token };
@@ -318,26 +331,42 @@ const FLASH_SAMPLER = () => {
         `new account gets a wallet automatically: ${w ? `${w.seconds_balance}s voice, ${w.chats_balance} chats` : 'none found'}`);
     });
     await step('A2', 'Wallet: funding', async () => {
-      const repoCalls = ['create-checkout', 'stripe-webhook', 'billing-portal', 'record-usage'].some(f => {
-        try { return /grant_credit/.test(fs.readFileSync(path.join(HERE, '..', 'supabase', 'functions', f, 'index.ts'), 'utf8')); } catch { return false; }
-      });
-      await credit(idA, 600);
-      const w = await wallet(idA);
-      record('A2', 'Wallet: funding', repoCalls ? 'PASS' : 'FAIL',
-        `${repoCalls ? 'payments credit the wallet' : 'nothing in the code credits a wallet when a membership starts or renews (grant_credit is never called), so paying members get 0 voice time, while the subscribe page promises 3 hours a month'}. Crediting from the backend works: +600s -> balance ${w.s}s`);
+      // The webhook must fund the wallet, and the plan must apply exactly once
+      // per trial and per paid period. The SQL is what the webhook calls.
+      const hook = fs.readFileSync(path.join(HERE, '..', 'supabase', 'functions', 'stripe-webhook', 'index.ts'), 'utf8');
+      const wired = /apply_stripe_allowance/.test(hook);
+      const sub = `sub_autotest_${RUN}`;
+      const w0 = await wallet(idA);
+      await stripeAllowance(idA, sub, 'trialing'); const trial = await wallet(idA);
+      await stripeAllowance(idA, sub, 'trialing'); const trialAgain = await wallet(idA);
+      await reportUsage(idA, 'a2-use', 600, 'autotest trial call');              // use 10 minutes of the trial
+      await stripeAllowance(idA, sub, 'active', '2026-12-01T00:00:00Z'); const paid = await wallet(idA);
+      await stripeAllowance(idA, sub, 'active', '2026-12-01T00:00:00Z'); const paidAgain = await wallet(idA);
+      await reportUsage(idA, 'a2-use2', 3600, 'autotest paid call');            // use an hour, then renew
+      await stripeAllowance(idA, sub, 'active', '2027-01-01T00:00:00Z'); const renewed = await wallet(idA);
+      await stripeAllowance(idA, sub, 'past_due', '2027-02-01T00:00:00Z'); const unpaid = await wallet(idA);
+      const reconciles = (await ledgerTotal(idA)) === renewed.s;
+      const okTrial = trial.s - w0.s === 3600 && trial.c - w0.c === 120 && trialAgain.s === trial.s;
+      const okPaid = paid.s === 10800 && paidAgain.s === 10800 && renewed.s === 10800 && unpaid.s === 10800;
+      record('A2', 'Wallet: funding', wired && okTrial && okPaid && reconciles ? 'PASS' : 'FAIL',
+        `${wired ? 'the Stripe webhook funds the wallet' : 'the Stripe webhook does NOT call apply_stripe_allowance'}; trial start -> +${fmtDuration(trial.s - w0.s)} voice, +${trial.c - w0.c} chats (repeat event: no change ${trialAgain.s === trial.s}); first paid month -> ${fmtDuration(paid.s)} (unused trial time expired; repeat event: no change ${paidAgain.s === paid.s}); renewal after using 1h -> ${fmtDuration(renewed.s)} (reset, no roll-over); payment failed -> nothing added (${fmtDuration(unpaid.s)}); history adds up to the balance: ${reconciles}`);
     });
-    let afterDebit = 0;
     await step('A3', 'Wallet: deductions', async () => {
-      const r = await edge('record-usage', tokA, { seconds: 40, description: 'autotest call' });
-      const w = await wallet(idA); afterDebit = w.s;
-      record('A3', 'Wallet: deductions', ok2xx(r) && w.s === 560 ? 'PASS' : 'FAIL',
-        `a 40-second call -> HTTP ${r.status}, balance 600s -> ${w.s}s, recorded in the history`);
+      const before = await wallet(idA);
+      const r = await reportUsage(idA, 'a3', 40, 'autotest call');
+      const w = await wallet(idA);
+      record('A3', 'Wallet: deductions', ok2xx(r) && before.s - w.s === 40 && r.data?.charged_seconds === 40 ? 'PASS' : 'FAIL',
+        `a 40-second call reported by the server -> HTTP ${r.status}, balance ${fmtDuration(before.s)} -> ${fmtDuration(w.s)}, recorded in the history`);
     });
     await step('A4', 'Wallet: balance controlled by the backend', async () => {
-      const neg = await edge('record-usage', tokA, { seconds: -500 });
-      const huge = await edge('record-usage', tokA, { seconds: 99999999 });
-      record('A4', 'Wallet: balance controlled by the backend', 'FAIL',
-        `the browser cannot write balances (7a), but how much a call costs is decided by the browser: record-usage deducts whatever "seconds" the page sends (it rejects only negative -> HTTP ${neg.status} and over 4 hours -> HTTP ${huge.status}). A member could report 0 or never report. Nothing calls it yet, so calls currently cost nothing. Usage must come from the voice provider's server, not the page.`);
+      const before = await wallet(idA);
+      const self = await edge('record-usage', tokA, { user_id: idA, call_id: `autotest-${RUN}-a4`, seconds: 1 });
+      const other = await edge('record-usage', tokA, { user_id: idB, call_id: `autotest-${RUN}-a4b`, seconds: 1 });
+      const anon = await edge('record-usage', undefined, { user_id: idA, call_id: `autotest-${RUN}-a4c`, seconds: 1 });
+      const after = await wallet(idA);
+      const refused = [self, other, anon].every(r => r.status === 401 || r.status === 403);
+      record('A4', 'Wallet: balance controlled by the backend', refused && after.s === before.s ? 'PASS' : 'FAIL',
+        `a member reporting its own usage -> HTTP ${self.status}; charging another member -> HTTP ${other.status}; signed out -> HTTP ${anon.status}; balance unchanged: ${after.s === before.s}. Balances are written only by the database (7a), and usage only by the server with the service key. The call length must come from the voice provider's server (Delphi), which does not report it yet.`);
     });
     await step('A5', 'Wallet: transaction history', async () => {
       const mine = await rest(`wallet_ledger?select=kind,seconds&user_id=eq.${idA}&order=id`, { token: tokA });
@@ -349,27 +378,29 @@ const FLASH_SAMPLER = () => {
     });
     await step('A6', 'Wallet: duplicate transactions', async () => {
       const before = await wallet(idA);
-      const body = { seconds: 20, description: 'autotest duplicate' };
-      await edge('record-usage', tokA, body); await edge('record-usage', tokA, body);
+      const first = await reportUsage(idA, 'a6', 20, 'autotest duplicate');
+      const again = await reportUsage(idA, 'a6', 20, 'autotest duplicate');
       const after = await wallet(idA);
       const charged = before.s - after.s;
-      record('A6', 'Wallet: duplicate transactions', charged === 20 ? 'PASS' : 'WARN',
-        `the same 20-second usage report sent twice was charged ${charged / 20} times (${charged}s). Usage reports carry no unique ID, so a retried request is charged again. (Stripe events are protected against duplicates.)`);
+      record('A6', 'Wallet: duplicate transactions', charged === 20 && again.data?.duplicate === true ? 'PASS' : 'FAIL',
+        `the same 20-second call reported twice (same call id) -> charged ${charged}s in total; the second report answered HTTP ${again.status} as a duplicate: ${again.data?.duplicate === true}. Stripe events are protected against duplicates as well.`);
     });
     await step('A7', 'Wallet: insufficient funds', async () => {
       const before = await wallet(idA); const rowsBefore = await ledgerRows(idA);
-      const r = await edge('record-usage', tokA, { seconds: before.s + 1000, description: 'autotest overdraw' });
+      const r = await reportUsage(idA, 'a7', before.s + 1000, 'autotest overrun');
       const after = await wallet(idA); const rowsAfter = await ledgerRows(idA);
-      record('A7', 'Wallet: insufficient funds', after.s === 0 && !ok2xx(r) ? 'PASS' : 'WARN',
-        `charging ${before.s + 1000}s with only ${before.s}s left -> HTTP ${r.status}; balance became ${after.s}s (never negative) but the request was not refused and the history records the full ${before.s + 1000}s (${rowsAfter - rowsBefore} new entry)`);
+      const total = await ledgerTotal(idA);
+      const ok = ok2xx(r) && after.s === 0 && r.data?.charged_seconds === before.s && r.data?.overage_seconds === 1000 && total === after.s;
+      record('A7', 'Wallet: insufficient funds', ok ? 'PASS' : 'FAIL',
+        `a call ${fmtDuration(before.s + 1000)} long with only ${fmtDuration(before.s)} left -> charged ${fmtDuration(r.data?.charged_seconds ?? 0)}, ${fmtDuration(r.data?.overage_seconds ?? 0)} reported as over the balance and not charged; balance ${after.s}s (never negative); ${rowsAfter - rowsBefore} history entry, and the history adds up to the balance: ${total === after.s}`);
     });
     await step('A8', 'Wallet: concurrent calls', async () => {
       await credit(idA, 600 - (await wallet(idA)).s);
       const rowsBefore = await ledgerRows(idA);
-      const rs = await Promise.all(Array.from({ length: 10 }, () => edge('record-usage', tokA, { seconds: 30, description: 'autotest concurrent' })));
+      const rs = await Promise.all(Array.from({ length: 10 }, (_, i) => reportUsage(idA, 'a8-' + i, 30, 'autotest concurrent')));
       const w = await wallet(idA); const added = (await ledgerRows(idA)) - rowsBefore;
       record('A8', 'Wallet: concurrent calls', w.s === 300 && added === 10 ? 'PASS' : 'FAIL',
-        `10 simultaneous 30-second charges on 600s (${rs.filter(ok2xx).length} accepted) -> balance ${w.s}s, ${added} history entries (expected 300s and 10)`);
+        `10 simultaneous 30-second calls on 600s (${rs.filter(ok2xx).length} accepted) -> balance ${w.s}s, ${added} history entries (expected 300s and 10)`);
     });
     await step('A9', 'Wallet: failed payments, refunds, cancellation', async () => {
       const hook = fs.readFileSync(path.join(HERE, '..', 'supabase', 'functions', 'stripe-webhook', 'index.ts'), 'utf8');
@@ -435,17 +466,36 @@ const FLASH_SAMPLER = () => {
         `${firstLimited ? `wrong-password attempts were blocked (HTTP 429) after ${firstLimited - 1} tries` : `40 wrong-password attempts in a row were all answered (no limit hit)`}; reset emails limited (3b); CAPTCHA on sign-up/log-in: ${cfg.security_captcha_enabled ? 'on' : 'off'}`);
     });
 
-    // 8. Account deletion (UI + contact); backend checked at cleanup --------------------
+    // 8. Account deletion: member B deletes its own account from Preferences, in
+    //    the browser; cleanup (8b) checks the remaining test account's data goes too.
     await step('8a', 'Account deletion: members can request it', async () => {
-      let offered = [];
-      for (const pg of ['preferences', 'billing', 'wallet', 'home']) {
-        const html = await (await fetch(`${SITE}/app/${pg}.html`)).text();
-        if (/delete (my |your )?account|close (my |your )?account|account deletion/i.test(html)) offered.push(pg);
-      }
-      const mx = await (await fetch('https://dns.google/resolve?name=ravmizai.com&type=MX')).json();
-      const mail = (mx.Answer || []).filter(a => a.type === 15).length;
-      record('8a', 'Account deletion: members can request it', offered.length ? 'PASS' : 'FAIL',
-        `${offered.length ? 'offered on ' + offered.join(', ') : 'no way to delete or request deletion inside the app'}; the Privacy Policy sends deletion requests to support@ravmizai.com, and ravmizai.com ${mail ? 'can' : 'cannot'} receive email (${mail} mail servers)`);
+      // Confirming with someone else's email must delete nothing.
+      const wrong = await edge('delete-account', tokB, { confirm: `someone-else-${RUN}@${DOMAIN}` });
+      const stillThere = (await one(`select count(*)::int as n from auth.users where id = '${uuid(idB)}'`)).n === 1;
+      const ctx = await browser.newContext(); const p = await ctx.newPage();
+      let confirmed = false;
+      try {
+        await p.goto(`${SITE}/login`);
+        await p.fill('#loginForm [name=email]', B); await p.fill('#loginForm [name=password]', pwB);
+        await p.click('#loginForm button[type=submit]');
+        await p.waitForURL(/\/app\//, { timeout: 20000 });
+        await p.goto(`${SITE}/app/preferences.html`);
+        await p.click('#deleteAccountBtn');
+        await p.fill('#deleteConfirm', B);
+        await p.click('#deleteAccountGo');
+        await p.getByRole('button', { name: 'Delete account', exact: true }).click();
+        await p.waitForFunction(() => /Account deleted/.test(document.querySelector('#deleteAccount')?.textContent || ''), null, { timeout: 30000 });
+        confirmed = true;
+      } finally { await ctx.close(); }
+      const left = await one(`select
+        (select count(*) from auth.users where id = '${uuid(idB)}')::int as users,
+        (select count(*) from public.profiles where id = '${uuid(idB)}')::int as profiles,
+        (select count(*) from public.wallets where user_id = '${uuid(idB)}')::int as wallets,
+        (select count(*) from public.wallet_ledger where user_id = '${uuid(idB)}')::int as ledger,
+        (select count(*) from public.trials where user_id = '${uuid(idB)}')::int as trials`);
+      const gone = left.users + left.profiles + left.wallets + left.ledger + left.trials === 0;
+      record('8a', 'Account deletion: members can request it', wrong.status === 400 && stillThere && confirmed && gone ? 'PASS' : 'FAIL',
+        `a member deleted its own account from Preferences (typed its email, confirmed): ${confirmed ? 'done message shown' : 'NO done message'}; account and all its data gone: ${gone}; confirming with another email first -> HTTP ${wrong.status}, nothing deleted: ${stillThere}. A member with a Stripe subscription has it cancelled before anything is deleted.`);
     });
   } finally {
     // Cleanup: delete every account this run created; their data must go with them.
@@ -461,7 +511,7 @@ const FLASH_SAMPLER = () => {
           (select count(*) from public.trials where user_id in (${list}))::int as trials`);
         const rest = left.profiles + left.wallets + left.ledger + left.trials;
         record('8b', 'Account deletion: personal data removed', rest ? 'FAIL' : 'PASS',
-          `deleting the ${ids.length} test accounts removed their profile, wallet, history and trials (left behind: ${rest} rows). Records held by Stripe are separate and not covered here.`);
+          `deleting the remaining ${ids.length} test account${ids.length === 1 ? '' : 's'} removed profile, wallet, history and trials (left behind: ${rest} rows). Records held by Stripe are separate and not covered here.`);
       }
     } catch (e) { record('8b', 'Account deletion: personal data removed', 'ERROR', 'cleanup failed: ' + e.message + ` (delete autotest+${RUN}.* users by hand)`); }
     await browser.close().catch(() => {});

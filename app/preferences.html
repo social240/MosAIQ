@@ -15,5 +15,15 @@
 <div class="settingsSection"><h3>Current challenges</h3><div class="pills"><span class="pill" data-group="challenges" data-value="fear">Fear / anxiety about events</span><span class="pill" data-group="challenges" data-value="consistency">Consistency</span><span class="pill" data-group="challenges" data-value="doubt">Doubt</span><span class="pill" data-group="challenges" data-value="family">Family tension</span><span class="pill" data-group="challenges" data-value="meaning">Meaning / direction</span></div></div>
 <div class="settingsSection"><h3>Preferred communication style</h3><div class="optionGrid"><div class="option single" data-group="style" data-value="direct"><b>Direct & Clear</b><small>Straightforward Torah perspective</small></div><div class="option single" data-group="style" data-value="warm"><b>Warm & Encouraging</b><small>Gentle support with practical next steps</small></div><div class="option single" data-group="style" data-value="source"><b>Source Focused</b><small>More references and original teaching links</small></div><div class="option single" data-group="style" data-value="deep"><b>Deep & Philosophical</b><small>Longer, conceptual discussion</small></div></div></div>
 <div class="settingsSection"><h3>Jewish background (optional)</h3><textarea class="input" placeholder="Anything RavMizAI should know about your background, observance level, learning style or language preferences."></textarea></div>
-<button class="btn btn-primary" style="margin-top:24px">Save Preferences</button></form></main>
+<button class="btn btn-primary" style="margin-top:24px">Save Preferences</button></form>
+<section class="settingsSection dangerZone" id="deleteAccount" aria-labelledby="deleteAccountTitle">
+<h3 id="deleteAccountTitle">Delete your account</h3>
+<p class="appSub">This cancels your membership immediately and permanently deletes your profile, preferences, wallet and history. It can’t be undone. Payment records kept by Stripe are not affected.</p>
+<button type="button" class="btn btn-outline dangerOutline" id="deleteAccountBtn">Delete my account…</button>
+<form id="deleteAccountForm" hidden>
+<div class="field"><label for="deleteConfirm">Type your email address to confirm</label><input class="input" id="deleteConfirm" type="email" autocomplete="off" autocapitalize="off" spellcheck="false" required></div>
+<div id="deleteError" class="error" role="alert"></div>
+<div class="dangerActions"><button type="submit" class="btn btn-danger" id="deleteAccountGo">Permanently delete my account</button><button type="button" class="btn btn-outline" id="deleteAccountCancel">Keep my account</button></div>
+</form>
+</section></main>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script><script src="../assets/supabase-config.js"></script><script src="../assets/auth.js"></script><script src="../assets/app.js"></script></body></html>

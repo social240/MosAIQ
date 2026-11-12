@@ -743,9 +743,9 @@ async function setupActivity(){
   return;
  }
 
- // 'debit' spends; everything else adds. The ledger stores magnitudes, so the
- // sign comes from the kind, not from the stored number.
- const neg=k=>k==='debit';
+ // 'debit' spends and 'expire' is allowance that lapsed at renewal; everything
+ // else adds. The ledger stores magnitudes, so the sign comes from the kind.
+ const neg=k=>k==='debit'||k==='expire';
  const fmt=r=>{
   const parts=[];
   // Prefer seconds; fall back to the legacy minutes column on older rows.
@@ -841,6 +841,40 @@ function setupPrefs(){
   localStorage.setItem('rm_prefs',JSON.stringify(out));showOk('Preferences saved.','#prefSuccess');window.scrollTo({top:0,behavior:'smooth'});
  });
 }
+// Close the account (Preferences). The server cancels any Stripe subscription
+// first and deletes the account only if that worked, so a failure leaves
+// everything as it was.
+function setupDeleteAccount(){
+ const open=$('#deleteAccountBtn'), form=$('#deleteAccountForm'); if(!open||!form)return;
+ const input=$('#deleteConfirm'), go=$('#deleteAccountGo');
+ const hideErr=()=>{const e=$('#deleteError');if(e)e.style.display='none';};
+ open.onclick=()=>{ form.hidden=false; open.hidden=true; hideErr(); input.focus(); };
+ $('#deleteAccountCancel').onclick=()=>{ form.hidden=true; open.hidden=false; input.value=''; hideErr(); open.focus(); };
+ form.addEventListener('submit',async e=>{
+  e.preventDefault(); hideErr();
+  const typed=input.value.trim();
+  if(!typed){ showErr('Type your email address to confirm.','#deleteError'); input.focus(); return; }
+  const yes=await confirmModal({
+   title:'Delete your account?',
+   message:'Your membership ends now, and your profile, wallet and history are deleted for good.',
+   confirmText:'Delete account',
+   cancelText:'Cancel',
+   danger:true
+  });
+  if(!yes)return;
+  go.disabled=true; go.setAttribute('aria-busy','true');
+  try{
+   await RMAuth.deleteAccount(typed);
+   ['rm_user','rm_prefs','rm_activity','rm_verify_code','rm_verify_email','rm_next_after_verify','rm_oauth_intent']
+     .forEach(k=>{try{localStorage.removeItem(k)}catch(_){}});
+   $('#deleteAccount').innerHTML='<h3>Account deleted</h3><p class="appSub" role="status">Your account and its data have been deleted. Taking you to the home page…</p>';
+   setTimeout(()=>{location.href='../index.html'},2500);
+  }catch(ex){
+   showErr(ex?.message||'The account could not be deleted. Please try again.','#deleteError');
+   go.disabled=false; go.removeAttribute('aria-busy');
+  }
+ });
+}
 // Call controls on chat.html. The call itself is still a prototype, so these
 // drive the on-screen state rather than real audio.
 function setupCallControls(){
@@ -893,7 +927,7 @@ function setupTranscript(){
  transcript.innerHTML=sample.map(([who,msg])=>`<div class="msg ${who==='You'?'you':''}"><b>${who}</b><div class="bubble">${msg}</div></div>`).join('');
 }
 document.addEventListener('DOMContentLoaded',()=>{
- navInit();setupPrefs();setupTranscript();setupCallControls();setupPasswordToggles();
+ navInit();setupPrefs();setupDeleteAccount();setupTranscript();setupCallControls();setupPasswordToggles();
  // The auth-aware pages need assets/auth.js. Fail loudly rather than silently
  // leaving a form that looks live but does nothing.
  if(typeof RMAuth==='undefined'){
