@@ -67,7 +67,11 @@ p{margin:0}
     glow on the copy carries legibility over the busier frames. */
  .hero-bg{height:min(100%,100vh);height:min(100%,100svh);-webkit-mask-image:linear-gradient(180deg,#000 70%,transparent 100%);mask-image:linear-gradient(180deg,#000 70%,transparent 100%)}
  .hero-stage:after{bottom:auto;height:min(100%,100vh);height:min(100%,100svh);background:linear-gradient(180deg,rgba(255,255,255,.58) 0%,rgba(255,255,255,.36) 45%,rgba(255,255,255,.10) 80%,rgba(255,255,255,0) 100%)}
- .hero .copy{text-shadow:0 0 22px rgba(255,255,255,.9),0 0 2px rgba(255,255,255,.6)}
+ .hero .copy{text-shadow:0 0 1px rgba(255,255,255,.95),0 0 8px rgba(255,255,255,.9),0 0 22px rgba(255,255,255,.85)}
+ /* The grey body copy (--ink2) still lost against the stonework on busy
+    frames (client feedback), so every line of hero copy uses the headline's
+    navy here. Darker text instead of a heavier veil keeps the video visible. */
+ .hero .copy .muted{color:var(--navy)}
 }
 /* The footage plays for everyone. It is a slow, wide landscape shot with no
    flashing or rapid motion, so it is not the kind of animation the
