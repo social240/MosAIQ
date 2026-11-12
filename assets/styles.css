@@ -150,6 +150,9 @@ textarea.input{height:120px;padding-top:14px}
 .trialHero{min-height:100vh;padding:56px 0 72px;background:var(--tint)}
 .trialGrid{display:grid;grid-template-columns:1.1fr .9fr;gap:clamp(40px,6vw,72px);align-items:start}
 .trialCopy{padding-top:24px}
+/* The trial's price wherever the trial is offered: same words as signup and checkout. */
+.trialTerms{font-size:14px;font-weight:600;color:var(--muted);margin:14px 0 0}
+.trialCopy .trialTerms{font-size:17px;font-weight:700;color:var(--navy);margin:22px 0 0}
 .trialCopy .eyebrow{margin-top:56px!important}
 .trialCopy h1{font-family:var(--serif);font-weight:400;font-size:clamp(42px,5.4vw,72px);line-height:1.04;margin:16px 0 0;text-wrap:balance}
 .trialCopy p{font-size:19px;color:var(--muted);line-height:1.65;max-width:580px}
