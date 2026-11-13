@@ -204,6 +204,12 @@ textarea.input{height:120px;padding-top:14px}
 .introSteps{display:grid;gap:0;margin:20px 0}
 .introStep{display:flex;gap:14px;align-items:center;padding:16px 0;border-bottom:1px solid var(--line);color:var(--navy)}
 .introStep .orb{background:var(--tint);color:var(--navy);border:1px solid var(--line)}
+/* Recording notice before voice calls (Terms s.11, Privacy s.4.1). The text sits
+   in one <span> so the flex row only holds the red dot and the text block. */
+.recNotice{display:flex;gap:10px;align-items:flex-start;margin:0 0 18px;padding:12px 14px;border:1px solid #EBD39A;border-radius:12px;background:#FBF4E2;color:var(--navy);font-size:14px;line-height:1.55;text-align:left}
+.recNotice:before{content:"";flex:none;width:10px;height:10px;margin-top:6px;border-radius:50%;background:#C0392B;box-shadow:0 0 0 3px rgba(192,57,43,.18)}
+.recNotice a{color:var(--accent-d);font-weight:700}
+.card>.recNotice{margin:4px 4px 12px}
 .chatShell{max-width:760px;margin:20px auto 0;background:#FFFFFF;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
 .chatTop{text-align:center;padding:22px 18px;border-bottom:1px solid var(--line)}
 .phoneAvatar{width:98px;height:98px;border-radius:50%;overflow:hidden;margin:0 auto 12px;border:3px solid var(--gold-d);box-shadow:0 0 0 8px rgba(212,160,58,.15)}
