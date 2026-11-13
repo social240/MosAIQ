@@ -68,6 +68,19 @@
     Cache-Control = "public, max-age=0, must-revalidate"
 
 # ---------------------------------------------------------------------------
+# One address: the old Netlify address forwards to the custom domain
+# ---------------------------------------------------------------------------
+# ravmizai.com is the primary domain (GoDaddy DNS -> Netlify, since
+# 2026-11-13). Old links, bookmarks and emails that use ravmizaii.netlify.app
+# land on the same page there, path and query kept. Deploy previews use other
+# netlify.app hostnames, so they are not affected.
+[[redirects]]
+  from = "https://ravmizaii.netlify.app/*"
+  to = "https://ravmizai.com/:splat"
+  status = 301
+  force = true
+
+# ---------------------------------------------------------------------------
 # Keep server-side material out of the published site
 # ---------------------------------------------------------------------------
 # The SQL, Edge Function sources and tests live in the repo but are not part

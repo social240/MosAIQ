@@ -28,7 +28,7 @@
   // client ID is public by design; it appears in every Google sign-in URL.
   const GOOGLE_CLIENT_ID = cfg.googleClientId
     || '195314834216-tt1hjcrkbqr3r9qaoheogq5nk7fgpicm.apps.googleusercontent.com';
-  const GOOGLE_BUTTON_ORIGINS = ['https://ravmizaii.netlify.app'];
+  const GOOGLE_BUTTON_ORIGINS = ['https://ravmizai.com', 'https://www.ravmizai.com', 'https://ravmizaii.netlify.app'];
 
   let sb = null;
   if (LIVE) {
