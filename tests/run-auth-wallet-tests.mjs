@@ -21,7 +21,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SITE = (process.env.SITE_URL || 'https://ravmizaii.netlify.app').replace(/\/$/, '');
+const SITE = (process.env.SITE_URL || 'https://ravmizai.com').replace(/\/$/, '');
 const REF = process.env.SUPABASE_REF || 'ujqrmjoklinyxbnvyswa';
 const CHANNEL = process.env.BROWSER_CHANNEL || 'msedge';          // an installed Edge or Chrome ("chrome")
 const DOMAIN = process.env.TEST_EMAIL_DOMAIN || 'example.com';

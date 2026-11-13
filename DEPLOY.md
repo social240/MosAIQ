@@ -89,8 +89,10 @@ the button tells visitors Google sign-in is not available yet. To turn it on:
    - Audience: *External*. Scopes: `openid`, plus the default
      `userinfo.email` and `userinfo.profile` (nothing else, so no review).
    - Clients → **Create client** → *Web application*:
-     - Authorized JavaScript origins: `https://ravmizaii.netlify.app`
-       (plus `http://localhost:5173` while developing)
+     - Authorized JavaScript origins: `https://ravmizai.com` and
+       `https://ravmizaii.netlify.app` (plus `http://localhost:5173` while
+       developing). Every origin here must also be in `GOOGLE_BUTTON_ORIGINS`
+       in assets/auth.js, and the other way round.
      - Authorized redirect URIs:
        `https://ujqrmjoklinyxbnvyswa.supabase.co/auth/v1/callback`
        (the exact value is shown on Supabase's Google provider page)
@@ -99,8 +101,9 @@ the button tells visitors Google sign-in is not available yet. To turn it on:
    paste the Client ID and secret, save.
 3. **Supabase** → Authentication → URL Configuration (step 4 above) must list
    the live site, or Supabase sends people back to the Site URL instead:
-   - Site URL: `https://ravmizaii.netlify.app`
-   - Redirect URLs: `https://ravmizaii.netlify.app/**`
+   - Site URL: `https://ravmizai.com` (the custom domain since 2026-11-13)
+   - Redirect URLs: `https://ravmizai.com/**`, `https://www.ravmizai.com/**`
+     and `https://ravmizaii.netlify.app/**`
 4. **Supabase** → SQL Editor: run `sql/006_oauth_profile_names.sql`, so a
    Google member's profile gets their name instead of "Member".
 

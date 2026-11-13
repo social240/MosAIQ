@@ -23,7 +23,7 @@ the test accounts. It is never printed. Never commit it.
 
 | Setting (environment) | Default |
 |---|---|
-| `SITE_URL` | `https://ravmizaii.netlify.app` |
+| `SITE_URL` | `https://ravmizai.com` |
 | `SUPABASE_REF` | `ujqrmjoklinyxbnvyswa` |
 | `BROWSER_CHANNEL` | `msedge` (or `chrome`) |
 | `TEST_EMAIL_DOMAIN` | `example.com` |
