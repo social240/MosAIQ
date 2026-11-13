@@ -2,9 +2,10 @@
 // RavMizAI: automated tests for sign-in, access control and the wallet.
 //
 // Runs against the LIVE site and Supabase project the way a visitor would,
-// using throwaway accounts (autotest+<run>.<x>@example.com) that are deleted at
-// the end, even if a test fails. See README.md for what each check proves and
-// what it cannot.
+// using throwaway accounts (autotest+<run>.<x>@ravmizai.com) that are deleted at
+// the end, even if a test fails. The mail service behind Supabase (the n8n
+// workflow) skips autotest+ addresses, so the run sends no real email. See
+// README.md for what each check proves and what it cannot.
 //
 //   cd tests && npm install
 //   SUPABASE_ACCESS_TOKEN=sbp_... npm test
@@ -24,7 +25,9 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SITE = (process.env.SITE_URL || 'https://ravmizai.com').replace(/\/$/, '');
 const REF = process.env.SUPABASE_REF || 'ujqrmjoklinyxbnvyswa';
 const CHANNEL = process.env.BROWSER_CHANNEL || 'msedge';          // an installed Edge or Chrome ("chrome")
-const DOMAIN = process.env.TEST_EMAIL_DOMAIN || 'example.com';
+// Supabase refuses to email reserved domains such as example.com, so the reset
+// and sign-up emails need a real domain; ravmizai.com has no mailbox behind it.
+const DOMAIN = process.env.TEST_EMAIL_DOMAIN || 'ravmizai.com';
 const PAT = process.env.SUPABASE_ACCESS_TOKEN || fromDotEnv('SUPABASE_ACCESS_TOKEN');
 const RUN = Date.now().toString(36);
 const mail = tag => `autotest+${RUN}.${tag}@${DOMAIN}`;
@@ -115,6 +118,20 @@ async function resetLink(email) {
   const p = (r.data && (r.data.properties || r.data)) || {};
   return { status: r.status, action: p.action_link, hash: p.hashed_token };
 }
+// Creates an account the way the dashboard does: already confirmed, no email.
+async function adminCreate(email, password, meta) {
+  await serviceKey();
+  return api('/auth/v1/admin/users', { method: 'POST', key: SERVICE, body: { email, password, email_confirm: true, user_metadata: meta } });
+}
+// A fresh 6-digit sign-up code for an unconfirmed account, like the one the
+// email carries. Supabase makes it without sending anything.
+async function signupCode(email) {
+  await serviceKey();
+  const r = await api('/auth/v1/admin/generate_link', { method: 'POST', key: SERVICE, body: { type: 'signup', email } });
+  const p = (r.data && (r.data.properties || r.data)) || {};
+  if (!p.email_otp) throw new Error(`could not get a sign-up code: HTTP ${r.status} ${msg(r.data)}`);
+  return p.email_otp;
+}
 
 const strongPw = () => 'Aa1!' + crypto.randomBytes(12).toString('base64url');
 const fmtDuration = s => { s = Math.max(0, Math.floor(s)); if (s < 60) return s + 's'; const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60; return h ? h + 'h' + (m ? ' ' + m + 'm' : '') : m + 'm' + (r ? ' ' + r + 's' : ''); };
@@ -139,12 +156,30 @@ const FLASH_SAMPLER = () => {
   console.log(`RavMizAI tests: run ${RUN} against ${SITE}\n`);
 
   try {
-    // Test account A. With "Confirm email" off, sign-up returns a session at once.
-    const first = await signUp(A, pwA, { first_name: 'Autotest', last_name: 'Alpha' });
-    idA = first.data?.user?.id || first.data?.id || '';
-    tokA = first.data?.access_token || '';
+    // Test account A, created already confirmed (no email is sent). The public
+    // sign-up with its emailed code is step 2.
+    const first = await adminCreate(A, pwA, { first_name: 'Autotest', last_name: 'Alpha' });
+    idA = first.data?.id || '';
     if (!idA) throw new Error(`could not create test account A: HTTP ${first.status} ${msg(first.data)}`);
-    if (!tokA) tokA = (await signIn(A, pwA)).data?.access_token || '';
+    tokA = (await signIn(A, pwA)).data?.access_token || '';
+
+    // Fills in and sends the sign-up form, then reports where it went: on to
+    // the code page ('verify'), or an error on the form ('error').
+    const submitSignup = async (p, email, pw) => {
+      await p.goto(`${SITE}/signup`);
+      await p.fill('#signupForm [name=first]', 'Auto'); await p.fill('#signupForm [name=last]', 'Test');
+      await p.fill('#signupForm [name=email]', email);
+      await p.fill('#signupForm [name=password]', pw);
+      if (await p.$('#signupForm [name=password2]')) await p.fill('#signupForm [name=password2]', pw);
+      await p.check('#signupForm [name=agree]');
+      await p.click('#signupForm button[type=submit]');
+      const where = await Promise.race([
+        p.waitForURL(/\/verify/, { timeout: 20000 }).then(() => 'verify'),
+        p.waitForSelector('#formError', { state: 'visible', timeout: 20000 }).then(() => 'error')
+      ]).catch(() => 'nothing');
+      const text = where === 'verify' ? (await p.textContent('h1')).trim() : where === 'error' ? (await p.textContent('#formError')).trim() : '';
+      return { where, text };
+    };
 
     // 1. Duplicate registration -------------------------------------------------
     let dup;
@@ -152,27 +187,20 @@ const FLASH_SAMPLER = () => {
       dup = await signUp(A, strongPw(), { first_name: 'Dup', last_name: 'Dup' });
       const n = (await one(`select count(*)::int as n from auth.users where lower(email) = lower('${A}')`)).n;
       const original = await signIn(A, pwA);
+      const quiet = ok2xx(dup) && !dup.data?.access_token;
       record('1', 'Duplicate registration', n === 1 && original.status === 200 ? 'PASS' : 'FAIL',
-        `second sign-up with the same email -> HTTP ${dup.status} "${msg(dup.data)}"; accounts with that email: ${n}; original password still works: ${original.status === 200}`);
+        `second sign-up with the same email -> HTTP ${dup.status} ${quiet ? '(answered like a new sign-up, without a session and without saying the address is taken)' : `"${msg(dup.data)}"`}; accounts with that email: ${n}; original password still works: ${original.status === 200}`);
     });
 
     // 9a/9b. Enumeration at sign-up and log-in ---------------------------------
     await step('9a', 'Enumeration: sign-up page', async () => {
       const ctx = await browser.newContext(); const p = await ctx.newPage();
-      await p.goto(`${SITE}/signup`);
-      await p.fill('#signupForm [name=first]', 'Auto'); await p.fill('#signupForm [name=last]', 'Test');
-      await p.fill('#signupForm [name=email]', A);
-      const pw = strongPw();
-      await p.fill('#signupForm [name=password]', pw);
-      if (await p.$('#signupForm [name=password2]')) await p.fill('#signupForm [name=password2]', pw);
-      await p.check('#signupForm [name=agree]');
-      await p.click('#signupForm button[type=submit]');
-      await p.waitForFunction(() => { const e = document.querySelector('#formError'); return e && e.style.display === 'block' && e.textContent.trim(); }, null, { timeout: 15000 });
-      const text = (await p.textContent('#formError')).trim();
-      await ctx.close();
-      const reveals = /already exists|already registered/i.test(text);
-      record('9a', 'Enumeration: sign-up page', reveals ? 'FAIL' : 'PASS',
-        `signing up with an email that has an account shows: "${text}"${reveals ? ' (tells anyone the address has an account)' : ''}; the API itself answered HTTP ${dup && dup.status} "${dup && msg(dup.data)}"`);
+      let res; try { res = await submitSignup(p, A, strongPw()); } finally { await ctx.close(); }
+      const n = (await one(`select count(*)::int as n from auth.users where lower(email) = lower('${A}')`)).n;
+      record('9a', 'Enumeration: sign-up page', res.where === 'verify' && n === 1 ? 'PASS' : 'FAIL',
+        res.where === 'verify'
+          ? `signing up with an email that already has an account goes on to the code page ("${res.text}"), exactly like a new sign-up: nothing tells the visitor the address is taken, and Supabase sends no email; accounts with that email: ${n}`
+          : `signing up with an email that has an account shows: "${res.text || 'nothing within 20s'}"${/already/i.test(res.text) ? ' (tells anyone the address has an account)' : ''}; the API itself answered HTTP ${dup && dup.status} "${dup && msg(dup.data)}"`);
     });
     await step('9b', 'Enumeration: log-in', async () => {
       const bad = 'Wrong!' + RUN + 'x9';
@@ -195,23 +223,29 @@ const FLASH_SAMPLER = () => {
       await ctx.close();
       return { text, api: apiRes };
     };
+    // One reset request for A from the page, then a second one straight away.
     let resetUiA, resetUiN, repeat;
+    const resetA = async () => { if (!resetUiA) { resetUiA = await forgot(A); repeat = await recover(A); } };
     await step('9c', 'Enumeration: password reset', async () => {
       resetUiN = await forgot(NOBODY);
-      resetUiA = await forgot(A);
-      repeat = await recover(A);
+      await resetA();
       const shown = t => t.replace(A, '<email>').replace(NOBODY, '<email>');
       const same = shown(resetUiA.text) === shown(resetUiN.text);
       record('9c', 'Enumeration: password reset', same ? 'PASS' : 'FAIL',
         `unknown email shows "${resetUiN.text}" (API ${resetUiN.api && resetUiN.api.status}); real account shows "${resetUiA.text}" (API ${resetUiA.api && resetUiA.api.status} ${resetUiA.api && resetUiA.api.body})`);
     });
     await step('3a', 'Password reset: email reaches the customer', async () => {
-      const refused = resetUiA && resetUiA.api && resetUiA.api.status >= 400;
-      record('3a', 'Password reset: email reaches the customer', refused ? 'FAIL' : 'WARN',
-        refused ? `Supabase refused to send the reset email to the account's address ("${resetUiA.api.body}"). With no email service set up (SMTP: ${cfg.smtp_host ? 'set' : 'not set'}), Supabase's built-in sender only delivers to project team members, so customers cannot reset their password.`
-                : `request accepted (API ${resetUiA && resetUiA.api && resetUiA.api.status}); delivery to an inbox is not checked by this suite.`);
+      await resetA();
+      const st = resetUiA.api && resetUiA.api.status;
+      const service = cfg.hook_send_email_enabled ? 'the mail service (n8n, which sends with Gmail)' : cfg.smtp_host ? 'the SMTP server' : '';
+      record('3a', 'Password reset: email reaches the customer', st === 200 && service ? 'PASS' : 'FAIL',
+        !st ? 'the reset page never called Supabase'
+          : st >= 400 ? `Supabase refused to send the reset email to the account's address: API ${st} "${resetUiA.api.body}"`
+          : !service ? `request accepted, but no mail service is connected (no SMTP, no send-email hook): Supabase's built-in sender only delivers to project team members, so customers cannot reset their password`
+          : `the reset request for the account's address was accepted (API 200): Supabase handed the email to ${service}, which answered OK. Test addresses (autotest+…) are skipped there instead of sent, so arrival in a real inbox is checked by hand.`);
     });
     await step('3b', 'Password reset: repeated requests', async () => {
+      await resetA();
       record('3b', 'Password reset: repeated requests', repeat.status === 429 ? 'PASS' : 'WARN',
         `a second request for the same address straight away -> HTTP ${repeat.status} "${msg(repeat.data)}" (Supabase allows one email per address every ${cfg.smtp_max_frequency}s and ${cfg.rate_limit_email_sent} emails an hour in total)`);
     });
@@ -241,11 +275,46 @@ const FLASH_SAMPLER = () => {
     });
 
     // 2. Email verification -------------------------------------------------------
+    // A new sign-up (account C, through the real form) must enter the emailed
+    // 6-digit code before it can sign in.
     await step('2', 'Email verification', async () => {
-      record('2', 'Email verification', cfg.mailer_autoconfirm ? 'FAIL' : 'PASS',
-        cfg.mailer_autoconfirm
-          ? `"Confirm email" is OFF: the test sign-up was given a session immediately and no confirmation email is sent. It cannot simply be switched on yet: with no email service, confirmation emails would not reach customers (see 3a). One-time email links are single-use (see 3c).`
-          : `"Confirm email" is on.`);
+      if (cfg.mailer_autoconfirm) {
+        record('2', 'Email verification', 'FAIL', `"Confirm email" is OFF: a new sign-up is signed in at once and no code is sent, so anyone can register an address they do not own.`);
+        return;
+      }
+      const C = mail('c'), pwC = strongPw();
+      const ctx = await browser.newContext(); const p = await ctx.newPage();
+      // After the code the site opens Stripe checkout. The test answers that
+      // call itself, so the run creates nothing in Stripe.
+      const checkout = `${SITE}/?autotest-checkout=${RUN}`;
+      const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization, apikey, content-type, x-client-info', 'access-control-allow-methods': 'POST, OPTIONS' };
+      await p.route('**/functions/v1/create-checkout', r => r.request().method() === 'OPTIONS'
+        ? r.fulfill({ status: 204, headers: cors })
+        : r.fulfill({ status: 200, contentType: 'application/json', headers: cors, body: JSON.stringify({ ok: true, url: checkout }) }));
+      let stage = 'sign-up form', res, before, early, wrong = '';
+      try {
+        res = await submitSignup(p, C, pwC);
+        if (res.where !== 'verify') throw new Error(`did not reach the code page: "${res.text || 'nothing within 20s'}"`);
+        before = await one(`select (email_confirmed_at is not null) as confirmed, (confirmation_sent_at is not null) as sent from auth.users where lower(email) = lower('${C}')`);
+        early = await signIn(C, pwC);
+        stage = 'wrong code';
+        await p.fill('#code', '000000');
+        await p.click('#verifyForm button[type=submit]');
+        await p.waitForSelector('#formError', { state: 'visible', timeout: 15000 });
+        wrong = (await p.textContent('#formError')).trim();
+        stage = 'right code';
+        await p.fill('#code', await signupCode(C));
+        await p.click('#verifyForm button[type=submit]');
+        await p.waitForURL(u => String(u).startsWith(checkout), { timeout: 20000 });
+      } catch (e) {
+        record('2', 'Email verification', 'FAIL', `${stage}: ${String(e && e.message || e).split('\n')[0].slice(0, 200)}`);
+        return;
+      } finally { await ctx.close(); }
+      const after = await one(`select (email_confirmed_at is not null) as confirmed from auth.users where lower(email) = lower('${C}')`);
+      const signsIn = (await signIn(C, pwC)).status === 200;
+      const ok = before.sent && !before.confirmed && early.status !== 200 && /not correct/i.test(wrong) && after.confirmed && signsIn;
+      record('2', 'Email verification', ok ? 'PASS' : 'FAIL',
+        `sign-up on /signup -> "${res.text}" page; Supabase handed a code to the mail service: ${Boolean(before.sent)}; signing in before entering it -> HTTP ${early.status} "${msg(early.data)}"; a wrong code -> "${wrong}"; the right code -> account confirmed: ${Boolean(after.confirmed)}, went on to checkout (answered by the test: nothing created in Stripe); signs in now: ${signsIn}`);
     });
 
     // 4. Google: no second account for an existing customer ---------------------
@@ -255,7 +324,7 @@ const FLASH_SAMPLER = () => {
         (select count(distinct user_id) from auth.identities where provider = 'google')::int as google_users,
         (select count(*) from (select user_id from auth.identities group by user_id having count(distinct provider) > 1) x)::int as linked`);
       record('4', 'Google sign-in joins the existing account', d.dup_emails === 0 && !cfg.security_manual_linking_enabled ? 'PASS' : 'FAIL',
-        `emails with more than one account: ${d.dup_emails}; ${d.google_users} people have used Google, ${d.linked} of them on an account that already existed (joined, not duplicated). Supabase links Google to the account with the same email automatically. Not exercised with a live Google login (needs a real Google account). Risk: with "Confirm email" off, someone could register a customer's email first and keep access after the real owner signs in with Google.`);
+        `emails with more than one account: ${d.dup_emails}; ${d.google_users} people have used Google, ${d.linked} of them on an account that already existed (joined, not duplicated). Supabase links Google to the account with the same email automatically. Not exercised with a live Google login (needs a real Google account). ${cfg.mailer_autoconfirm ? 'Risk: with "Confirm email" off, someone could register a customer\'s email first and keep access after the real owner signs in with Google.' : 'With "Confirm email" on, an email sign-up cannot sign in until its inbox has confirmed it.'}`);
     });
 
     // 6. Unauthorized access (signed out) -----------------------------------------
@@ -282,8 +351,8 @@ const FLASH_SAMPLER = () => {
     });
 
     // Test account B, for cross-account checks and the trial loophole.
-    const second = await signUp(B, pwB, { first_name: 'Autotest', last_name: 'Bravo' });
-    idB = second.data?.user?.id || ''; tokB = second.data?.access_token || (await signIn(B, pwB)).data?.access_token || '';
+    const second = await adminCreate(B, pwB, { first_name: 'Autotest', last_name: 'Bravo' });
+    idB = second.data?.id || ''; tokB = (await signIn(B, pwB)).data?.access_token || '';
     if (!idB) throw new Error(`could not create test account B: HTTP ${second.status} ${msg(second.data)}`);
     tokA = (await signIn(A, pwA)).data?.access_token || tokA;
 

@@ -51,11 +51,17 @@
     if (m.includes('email not confirmed')) return 'Please verify your email before signing in.';
     if (m.includes('user already registered') || m.includes('already been registered'))
       return 'An account with that email already exists. Try signing in instead.';
+    // Supabase answers a mistyped code and an old one with the same message.
+    if (m.includes('token has expired or is invalid'))
+      return 'That code is not correct or has expired. Check the newest email, or request a new code below.';
     if (m.includes('token has expired') || m.includes('expired'))
       return 'That code has expired. Request a new one below.';
     if (m.includes('invalid') && m.includes('token')) return 'That code is not correct.';
     if (m.includes('rate limit') || m.includes('too many'))
       return 'Too many attempts. Please wait a moment and try again.';
+    // The mail service (Supabase's send-email hook) failed or timed out.
+    if (m.includes('error sending') || m.includes('hook'))
+      return 'We could not send the email just now. Please try again in a few minutes.';
     if (m.includes('password')) return 'Password must be at least 10 characters.';
     if (m.includes('failed to fetch') || m.includes('networkerror'))
       return 'Could not reach the server. Check your connection and try again.';
@@ -236,12 +242,10 @@
       localStorage.setItem('rm_verify_email', email);
 
       // With "Confirm email" on, Supabase returns a user with no session until
-      // the code is entered. identities === [] means the email was already
-      // registered (Supabase does not reveal this via an error, by design).
-      const alreadyRegistered = data?.user && Array.isArray(data.user.identities)
-        && data.user.identities.length === 0;
-      if (alreadyRegistered) throw new Error('User already registered');
-
+      // the code is entered. For an address that already has an account it
+      // answers the same way (identities === [], and no email is sent), so the
+      // sign-up form cannot be used to find out who is a member. Both go to the
+      // code page, which offers "Sign in" to people who already have an account.
       return { needsVerification: !data?.session };
     },
 
