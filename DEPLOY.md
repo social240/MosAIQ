@@ -84,21 +84,39 @@ environment variables did not reach the build. Check the deploy log for
 Supabase only allows it once the Google provider is switched on. Until then
 the button tells visitors Google sign-in is not available yet. To turn it on:
 
-1. **Google Cloud Console** → Google Auth Platform (APIs & Services)
-   - Branding / consent screen: app name *RavMizAI*, a support email.
-   - Audience: *External*. Scopes: `openid`, plus the default
-     `userinfo.email` and `userinfo.profile` (nothing else, so no review).
-   - Clients → **Create client** → *Web application*:
+Two Google clients are involved:
+
+- **Google's own button** (login and signup on ravmizai.com) uses the client
+  in RavMizAI's own Google Cloud project, `ravmizai` (mymosaiq.com). It is the
+  only app in that project, so Google's screen can show RavMizAI's verified
+  name and logo.
+- **The redirect fallback** (where Google's script cannot load, and on local
+  or preview addresses) goes through Supabase, using an older web client in
+  another Google Cloud project. That client's redirect URI is
+  `https://ujqrmjoklinyxbnvyswa.supabase.co/auth/v1/callback`.
+
+1. **Google Cloud Console**, project `ravmizai` → Google Auth Platform
+   - Branding: app name *RavMizAI*, logo `assets/logo-square.png`, home page,
+     privacy and terms on `https://ravmizai.com`. Authorized domains:
+     `ravmizai.com` only. Google will not verify a domain we cannot prove we
+     own, such as supabase.co or netlify.app.
+   - Audience: *External*, *In production*. Scopes: `openid`, `email` and
+     `profile` only, so no extra review is needed.
+   - Clients → *RavMizAI website* (Web application):
      - Authorized JavaScript origins: `https://ravmizai.com` and
-       `https://ravmizaii.netlify.app` (plus `http://localhost:5173` while
-       developing). Every origin here must also be in `GOOGLE_BUTTON_ORIGINS`
-       in assets/auth.js, and the other way round.
-     - Authorized redirect URIs:
-       `https://ujqrmjoklinyxbnvyswa.supabase.co/auth/v1/callback`
-       (the exact value is shown on Supabase's Google provider page)
-   - Copy the **Client ID** and **Client secret**.
-2. **Supabase** → Authentication → Sign In / Providers → **Google**: enable it,
-   paste the Client ID and secret, save.
+       `https://www.ravmizai.com`. No redirect URIs.
+     - Its Client ID is `GOOGLE_CLIENT_ID` in assets/auth.js. Every origin
+       here must also be in `GOOGLE_BUTTON_ORIGINS`, and the other way round.
+   - Verification Center: brand verification. It needs ravmizai.com verified
+     in Google Search Console by an owner of this project.
+2. **Supabase** → Authentication → Sign In / Providers → **Google**: enabled.
+   - **Client IDs:** `<older client ID>,<RavMizAI client ID>`, comma-separated.
+     The **first** ID is the one used for the redirect flow, and it must match
+     the saved **Client secret**, which is the older client's secret. Supabase
+     accepts every ID in the list from Google's button.
+   - Through the Management API, set `external_google_client_id` to that
+     comma-separated list. Setting `external_google_additional_client_ids`
+     replaced the client ID instead (2026-11-14).
 3. **Supabase** → Authentication → URL Configuration (step 4 above) must list
    the live site, or Supabase sends people back to the Site URL instead:
    - Site URL: `https://ravmizai.com` (the custom domain since 2026-11-13)

@@ -26,9 +26,13 @@
   // JavaScript origin, and Google refuses to draw the button anywhere else
   // (local testing, deploy previews), so those keep the redirect flow. The
   // client ID is public by design; it appears in every Google sign-in URL.
+  // This client lives in RavMizAI's own Google Cloud project ("ravmizai"), so
+  // Google's screen can carry RavMizAI's verified name and logo. Supabase's
+  // Google provider lists it after the older client, which still serves the
+  // redirect flow (the first ID there is the one used for redirects).
   const GOOGLE_CLIENT_ID = cfg.googleClientId
-    || '195314834216-tt1hjcrkbqr3r9qaoheogq5nk7fgpicm.apps.googleusercontent.com';
-  const GOOGLE_BUTTON_ORIGINS = ['https://ravmizai.com', 'https://www.ravmizai.com', 'https://ravmizaii.netlify.app'];
+    || '128669733011-dn2mr29uc922q6amppod6u9hdgf2opri.apps.googleusercontent.com';
+  const GOOGLE_BUTTON_ORIGINS = ['https://ravmizai.com', 'https://www.ravmizai.com'];
 
   let sb = null;
   if (LIVE) {
