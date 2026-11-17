@@ -70,6 +70,12 @@ https://ujqrmjoklinyxbnvyswa.supabase.co/functions/v1/stripe-webhook
 - `customer.subscription.updated`
 - `customer.subscription.deleted`
 - `invoice.payment_failed`
+- `charge.refunded`
+
+`charge.refunded` applies the refund rule: when a subscription payment is fully
+refunded, the subscription stops renewing and the member keeps access until the
+end of the paid period. A partial refund changes nothing. To end the membership
+after a partial refund, cancel the subscription in Stripe.
 
 Copy the **signing secret** (`whsec_...`) and add it:
 

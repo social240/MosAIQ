@@ -4,6 +4,8 @@
 // wallet) as Stripe reports subscription changes: created, renewed, updated,
 // cancelled. sync-membership applies the same logic when the member returns
 // from checkout, so a late or lost webhook cannot leave a payer locked out.
+// A refunded subscription payment switches renewal off, so access runs to the
+// end of the paid period (refund.ts).
 //
 // Two defences matter here:
 //
@@ -61,6 +63,7 @@ async function verify(body: string, header: string, secret: string): Promise<boo
 // Membership and wallet logic shared with sync-membership, so the two paths
 // that apply a subscription can never disagree.
 import { applySubscription, call } from '../_shared/membership.ts';
+import { applyRefund } from './refund.ts';
 
 // Records the brand and last four digits of the card now on file, so the
 // billing page can show something real. Nothing sensitive is stored, and a
@@ -206,6 +209,13 @@ Deno.serve(async (req) => {
           p_user_id: null,
         });
         console.log('payment failed:', obj.subscription);
+        break;
+      }
+
+      // A refund, made in the Stripe dashboard. The member keeps access until
+      // the end of the paid period, and the subscription does not renew.
+      case 'charge.refunded': {
+        console.log('charge refunded:', obj.id, '-', await applyRefund(stripeKey, obj));
         break;
       }
 

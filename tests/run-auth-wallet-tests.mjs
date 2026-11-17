@@ -478,7 +478,7 @@ const FLASH_SAMPLER = () => {
       const has = e => hook.includes(`'${e}'`);
       const refunds = has('charge.refunded') || has('refund.created');
       record('A9', 'Wallet: failed payments, refunds, cancellation', refunds ? 'PASS' : 'WARN',
-        `from the Stripe webhook code (not run against Stripe here): failed payment ${has('invoice.payment_failed') ? 'handled (membership paused at once)' : 'NOT handled'}; cancellation ${has('customer.subscription.deleted') ? 'handled (membership ends)' : 'NOT handled'}; duplicate Stripe events ignored; refunds ${refunds ? 'handled' : 'NOT handled: a refund in Stripe changes neither access nor the wallet unless the subscription is also cancelled'}. Run with the Stripe CLI against test mode to exercise these.`);
+        `from the Stripe webhook code (not run against Stripe here): failed payment ${has('invoice.payment_failed') ? 'handled (membership paused at once)' : 'NOT handled'}; cancellation ${has('customer.subscription.deleted') ? 'handled (membership ends)' : 'NOT handled'}; duplicate Stripe events ignored; refunds ${refunds ? 'handled (a full refund stops renewal; access stays until the end of the paid period)' : 'NOT handled:a refund in Stripe changes neither access nor the wallet unless the subscription is also cancelled'}. Run with the Stripe CLI against test mode to exercise these.`);
     });
 
     // 5. Authentication persistence (+ wallet page after refresh) -------------------
