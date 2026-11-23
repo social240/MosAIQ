@@ -1077,8 +1077,141 @@ function setupTranscript(){
  ];
  transcript.innerHTML=sample.map(([who,msg])=>`<div class="msg ${who==='You'?'you':''}"><b>${who}</b><div class="bubble">${msg}</div></div>`).join('');
 }
+/* ---------------------------------------------------------------------------
+   Cookie consent banner
+   ---------------------------------------------------------------------------
+   Shown once to a first-time visitor, then remembered in LocalStorage. The
+   markup is built here rather than pasted into every page, so one change
+   reaches the whole site.
+
+   window.ravmizConsent is set before anything else on the page runs, so a
+   deferred analytics script can gate itself:
+
+       if (window.ravmizConsent === 'all') { ...load GA... }
+
+   Values: 'all' | 'essential' | 'none'.
+   --------------------------------------------------------------------------- */
+
+const COOKIE_KEY='rm_cookie_consent';
+
+function cookieConsentRead(){
+ try{return localStorage.getItem(COOKIE_KEY);}catch(e){return null;}
+}
+function cookieConsentWrite(v){
+ try{localStorage.setItem(COOKIE_KEY,v);}catch(e){}
+ window.ravmizConsent=v;
+}
+
+// Read the stored answer immediately, before DOMContentLoaded, so scripts that
+// check window.ravmizConsent do not see undefined.
+window.ravmizConsent=cookieConsentRead()||'none';
+
+// Analytics hook. Nothing is wired yet — when a provider is added, load it
+// here and nowhere else, so consent genuinely gates it.
+function cookieFireAnalytics(){
+ // Example, once a provider exists:
+ //   const s=document.createElement('script');
+ //   s.src='https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXX';
+ //   s.async=true; document.head.appendChild(s);
+}
+
+function cookieBannerHtml(){
+ return `
+  <div class="cbRow">
+   <div class="cbText">
+    <b>We use cookies</b>
+    Essential cookies keep you signed in and the service running. Optional
+    cookies help us understand how RavMizAI is used so we can improve it. See
+    our <a href="${location.pathname.includes('/app/')||location.pathname.includes('/trial/')?'../privacy.html':'privacy.html'}">Privacy Policy</a>.
+   </div>
+   <div class="cbActions">
+    <button type="button" class="cbBtn cbBtnPrimary" id="cbAcceptAll">Accept all</button>
+    <button type="button" class="cbBtn cbBtnOutline" id="cbEssential">Essentials only</button>
+    <button type="button" class="cbManage" id="cbManage" aria-expanded="false" aria-controls="cbPanel">Manage preferences</button>
+   </div>
+  </div>
+  <div class="cbPanel" id="cbPanel">
+   <div class="cbToggleRow">
+    <div class="cbLabel">Strictly necessary
+     <span>Sign-in sessions, security, core functionality. Always on.</span></div>
+    <label class="cbSwitch"><input type="checkbox" checked disabled aria-label="Strictly necessary cookies, always on"><span class="cbSlider"></span></label>
+   </div>
+   <div class="cbToggleRow">
+    <div class="cbLabel">Analytics and performance
+     <span>How visitors use the site — page views, session length.</span></div>
+    <label class="cbSwitch"><input type="checkbox" id="cbAnalytics" checked aria-label="Analytics and performance cookies"><span class="cbSlider"></span></label>
+   </div>
+   <div class="cbToggleRow">
+    <div class="cbLabel">Personalisation
+     <span>Remember your preferences and tailor your experience.</span></div>
+    <label class="cbSwitch"><input type="checkbox" id="cbPersonal" checked aria-label="Personalisation cookies"><span class="cbSlider"></span></label>
+   </div>
+   <button type="button" class="cbBtn cbBtnBlue" id="cbSave" style="margin-top:14px">Save my preferences</button>
+  </div>`;
+}
+
+function cookieBannerShow(){
+ if($('#cookieBanner'))return;
+ const el=document.createElement('div');
+ el.id='cookieBanner';
+ el.setAttribute('role','dialog');
+ el.setAttribute('aria-label','Cookie consent');
+ el.innerHTML=cookieBannerHtml();
+ document.body.appendChild(el);
+ document.documentElement.classList.add('cbShown');
+
+ const dismiss=()=>{
+  el.style.transition='opacity .25s';
+  el.style.opacity='0';
+  document.documentElement.classList.remove('cbShown');
+  setTimeout(()=>el.remove(),260);
+ };
+ const settle=(level,analyticsOn)=>{
+  cookieConsentWrite(level);
+  if(analyticsOn)cookieFireAnalytics();
+  dismiss();
+ };
+
+ $('#cbAcceptAll',el).addEventListener('click',()=>settle('all',true));
+ $('#cbEssential',el).addEventListener('click',()=>settle('essential',false));
+ $('#cbManage',el).addEventListener('click',()=>{
+  const panel=$('#cbPanel',el),btn=$('#cbManage',el);
+  const open=panel.classList.toggle('open');
+  btn.setAttribute('aria-expanded',String(open));
+ });
+ $('#cbSave',el).addEventListener('click',()=>{
+  const analytics=$('#cbAnalytics',el).checked;
+  const personal=$('#cbPersonal',el).checked;
+  settle(analytics||personal?'all':'essential',analytics);
+ });
+}
+
+// Footer / policy-page link so a visitor can change their mind later.
+window.openCookiePrefs=function(){
+ try{localStorage.removeItem(COOKIE_KEY);}catch(e){}
+ window.ravmizConsent='none';
+ const existing=$('#cookieBanner');
+ if(existing)existing.remove();
+ cookieBannerShow();
+ const panel=$('#cbPanel');
+ if(panel){
+  panel.classList.add('open');
+  const btn=$('#cbManage');
+  if(btn)btn.setAttribute('aria-expanded','true');
+ }
+};
+
+function setupCookieBanner(){
+ // Any link marked up as a cookie-preferences link reopens the banner.
+ $$('#cookiePrefsLink,[data-cookie-prefs]').forEach(a=>{
+  a.addEventListener('click',e=>{e.preventDefault();window.openCookiePrefs();});
+ });
+ if(!cookieConsentRead())cookieBannerShow();
+}
+
 document.addEventListener('DOMContentLoaded',()=>{
  navInit();setupPrefs();setupDeleteAccount();setupTranscript();setupCallControls();setupPasswordToggles();
+ setupCookieBanner();
  // The auth-aware pages need assets/auth.js. Fail loudly rather than silently
  // leaving a form that looks live but does nothing.
  if(typeof RMAuth==='undefined'){
