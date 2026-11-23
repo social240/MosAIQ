@@ -229,8 +229,14 @@ function busy(form,on,label){
  // otherwise be picked up as the submit control.
  const b=form.querySelector('button[type=submit],button:not([type]):not(.pwToggle)');
  if(!b)return;
- if(on){b.dataset.label??=b.textContent;b.disabled=true;b.style.opacity='.6';b.style.cursor='wait';if(label)b.textContent=label;}
- else{b.disabled=false;b.style.opacity='';b.style.cursor='';if(b.dataset.label)b.textContent=b.dataset.label;}
+ if(on){b.dataset.busy='1';b.dataset.label??=b.textContent;b.disabled=true;b.style.opacity='.6';b.style.cursor='wait';if(label)b.textContent=label;}
+ else{
+  delete b.dataset.busy;
+  b.disabled=false;b.style.opacity='';b.style.cursor='';if(b.dataset.label)b.textContent=b.dataset.label;
+  // Re-enabling is unconditional, so anything that gates this button — the
+  // Terms checkbox — has to reapply itself afterwards.
+  form.dispatchEvent(new CustomEvent('rm:idle'));
+ }
 }
 // "Remember me" was a checkbox with no name and no handler, so nothing was
 // ever remembered. It now fills the email back in on the next visit.
@@ -1209,9 +1215,53 @@ function setupCookieBanner(){
  if(!cookieConsentRead())cookieBannerShow();
 }
 
+// The Terms checkbox was validated only on submit, so the visitor filled the
+// whole form, pressed Continue, and only then learned they had missed a box.
+// The submit button now stays disabled until the box is ticked, which is what
+// the state of the form actually is.
+//
+// The submit-time check in setupSignup/setupTrial stays: a disabled button is
+// a convenience, not a control — it can be re-enabled from the console.
+function setupAgreeGate(){
+ $$('form').forEach(f=>{
+  const box=f.querySelector('[name=agree]');
+  if(!box)return;
+  const btn=f.querySelector('button[type=submit],button:not([type]):not(.pwToggle)');
+  if(!btn)return;
+
+  const sync=()=>{
+   // Never fight busy(): while a submit is in flight it owns the button.
+   if(btn.dataset.busy==='1')return;
+   const okNow=box.checked;
+   btn.disabled=!okNow;
+   btn.style.opacity=okNow?'':'.45';
+   btn.style.cursor=okNow?'':'not-allowed';
+   btn.setAttribute('aria-disabled',String(!okNow));
+  };
+
+  box.addEventListener('change',()=>{
+   sync();
+   // Clear the nag once they comply. Deferred, so a submit handler that wrote
+   // the message in the same tick does not immediately write it back.
+   if(box.checked)setTimeout(()=>{
+    const e=$('#formError');
+    if(e&&/agree/i.test(e.textContent||''))e.style.display='none';
+   },0);
+  });
+  sync();
+  // busy(false) re-enables the button on error; re-apply the gate after it.
+  f.addEventListener('rm:idle',sync);
+  // A submit handler that bails out early never reaches busy(), so there is no
+  // rm:idle to hook. Re-apply the gate after every submit attempt instead,
+  // once the handlers ahead of this one have had their turn.
+  f.addEventListener('submit',()=>setTimeout(sync,0));
+ });
+}
+
 document.addEventListener('DOMContentLoaded',()=>{
  navInit();setupPrefs();setupDeleteAccount();setupTranscript();setupCallControls();setupPasswordToggles();
  setupCookieBanner();
+ setupAgreeGate();
  // The auth-aware pages need assets/auth.js. Fail loudly rather than silently
  // leaving a form that looks live but does nothing.
  if(typeof RMAuth==='undefined'){

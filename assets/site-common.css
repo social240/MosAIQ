@@ -118,3 +118,13 @@ html.cbShown .authPage{align-items:start;padding-bottom:230px}
  #cookieBanner .cbActions{min-width:150px}
  html.cbShown .authPage{padding-left:clamp(20px,46vw,480px);padding-right:20px}
 }
+
+/* On an auth page the card is centred and tall, so a banner wide enough to
+   reach the middle of the viewport can sit over a control — it covered the
+   Terms checkbox on /signup at 1280x900. There the banner stays narrow and
+   hugs the left edge, clear of the card. */
+body:has(.authPage) #cookieBanner{width:min(380px,calc(100vw - 40px));font-size:14px;padding:16px 18px}
+body:has(.authPage) #cookieBanner .cbActions{min-width:146px}
+@media(max-width:620px){
+ body:has(.authPage) #cookieBanner{width:100%;font-size:15px;padding:18px 16px}
+}
