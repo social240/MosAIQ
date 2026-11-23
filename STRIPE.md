@@ -112,42 +112,157 @@ Other useful test cards:
 
 ## 7. Going live
 
-- [ ] Swap `sk_test_` → `sk_live_`, and the price id for the live-mode one
-- [ ] Register the webhook again in **live mode** (separate `whsec_`)
-- [ ] Set `SITE_URL` to the real domain
-- [ ] Activate the Stripe account (business details, bank account)
-- [ ] Turn email confirmation back on in Supabase
-- [ ] Check Terms and Privacy state $18/month and the 7-day trial
+**This is the step Mike hit on 24 November 2026.** The Checkout page showed a
+`Sandbox` badge and his real card was declined with *"Your request was in test
+mode, but used a non test card."* Nothing is broken — the deployed functions
+are still carrying **test** keys, so Stripe correctly refuses real cards.
 
----
+### Two accounts, not one
 
-## How it fits together
+The configured key belongs to a **sandbox**, not to the business account:
 
-```
-subscribe.html
-   └─ create-checkout  (reads caller from JWT; price/trial from server config)
-        └─ Stripe hosted Checkout
-             └─ stripe-webhook  (verifies signature, then grants)
-                  └─ apply_stripe_subscription()  →  profiles.is_member
-```
+| | |
+|---|---|
+| Business account | `acct_1Pae2oDdO89zKJmA` — **Digital Social** (the LLC named in the Terms) |
+| What the site uses | `acct_1UNzLvD1Kkwkc6Pk` — **Ravmizai**, a sandbox inside Digital Social |
 
-Two properties worth keeping:
+Checked on 24 November 2026, against the sandbox:
 
-1. **The browser cannot grant itself a membership.** The RLS policy from `002`
-   blocks writes to `is_member`, and `apply_stripe_subscription()` is
-   service-role only. A tampered request cannot buy access.
-2. **Price and trial length are server-side.** `create-checkout` ignores
-   anything the client sends, so the plan cannot be bought for $0.
+| | |
+|---|---|
+| Key prefix | `sk_test_` |
+| `charges_enabled` | true — **within the sandbox only** |
+| `payouts_enabled` | true — **within the sandbox only** |
+| Configured price | `price_1UNzcsD1Kkwkc6Pk3oDIATG4` — $18.00/month, `livemode: false` |
 
-## What changed from the pre-Stripe build
+Those flags say the sandbox is fully set up. They say nothing about whether
+**Digital Social** can take real money, because a test key cannot see the live
+account at all.
 
-`activate-trial` granted a 3-day trial with no payment method, because there
-was no processor. Stripe now runs the trial, so that path must not stay
-reachable — otherwise anyone could skip checkout. `004_stripe.sql` revokes
-`start_trial()` from the service role.
+**So before anything below: check that Digital Social itself is activated.**
+In the dashboard, switch out of the sandbox, turn **Test mode** off, and look
+for a banner asking for business details or a bank account. If one is there,
+activation has to be completed first — no key swap will work until it is.
 
-**Remove the old function after Stripe works:**
+### What has to be recreated, not reused
+
+A sandbox and the live account are separate worlds in Stripe, and nothing
+crosses between them. A sandbox object cannot be used with a live key —
+`create-checkout` would fail with *"No such price"*. These each need making
+again in **Digital Social, live mode**:
+
+* the **product and price** (new `price_...` id)
+* the **webhook endpoint** (new `whsec_...` signing secret)
+* any **coupon** that should still exist
+
+Customers, subscriptions and payment methods do not carry over either. Every
+test subscriber starts again — fine, since they are all test accounts.
+
+### Step by step
+
+**1. Get into the right account, in live mode.** The account switcher
+currently sits in the **Ravmizai** sandbox. Switch back to **Digital Social**,
+then turn **Test mode** off. Everything below must be done there — do it in
+the sandbox and you will simply create a second set of sandbox objects that
+live keys cannot see.
+
+Confirm before continuing: the dashboard header should read **Digital
+Social**, with no *Sandbox* badge and no *Test mode* banner.
+
+**2. Recreate the product.** Product catalogue → Add product.
+
+| Field | Value |
+|---|---|
+| Name | `RavMizAI Monthly Membership` |
+| Description | Access to RavMizAI's AI-powered Torah voice and text experience, including personalized conversations, saved preferences, transcripts, and member features. Includes a 7-day free trial, then $18/month automatically until canceled. Cancel anytime before the trial ends to avoid being charged. |
+| Price | `18.00` USD, Recurring, Monthly |
+
+Copy the new **price id**. Leave the price's own trial setting empty — the
+7-day trial is applied by `create-checkout`, and setting it in both places
+gives the member 14 days.
+
+**3. Recreate the webhook.** Developers → Webhooks → Add endpoint, with the
+same URL and the same six events as §5. Copy the new signing secret.
+
+**4. Swap the secrets.**
 
 ```bash
-npx supabase functions delete activate-trial --project-ref ujqrmjoklinyxbnvyswa
+npx supabase secrets set \
+  STRIPE_SECRET_KEY=sk_live_xxx \
+  STRIPE_PRICE_ID=price_xxx_live \
+  STRIPE_WEBHOOK_SECRET=whsec_xxx_live \
+  SITE_URL=https://ravmizai.com \
+  --project-ref ujqrmjoklinyxbnvyswa
 ```
+
+`SITE_URL` is what Stripe returns the customer to. It was wrong once before —
+pointing at a developer machine — and sent everyone to an error page after
+paying. Check it matches the domain people actually use.
+
+**5. Redeploy.** Secrets are read at boot, so a function keeps using the old
+key until it is redeployed:
+
+```bash
+npx supabase functions deploy create-checkout  --project-ref ujqrmjoklinyxbnvyswa
+npx supabase functions deploy billing-portal   --project-ref ujqrmjoklinyxbnvyswa
+npx supabase functions deploy sync-membership  --project-ref ujqrmjoklinyxbnvyswa
+npx supabase functions deploy delete-account   --project-ref ujqrmjoklinyxbnvyswa
+npx supabase functions deploy stripe-webhook --no-verify-jwt --project-ref ujqrmjoklinyxbnvyswa
+```
+
+All five read `STRIPE_SECRET_KEY`. Miss one and it keeps talking to test mode
+against live data — `delete-account` in particular would fail to cancel a real
+subscription, leaving someone billed after they deleted their account.
+
+**6. Verify with one real card.** There is no test card in live mode; the only
+way to prove it works is a real charge.
+
+1. Sign up as a new user and start the trial.
+2. The Checkout page must show **no Sandbox badge**.
+3. Complete it with a real card. **£0 / $0 is taken** — it is a 7-day trial,
+   so the card is only authorised.
+4. You should land on `/app/home.html?checkout=success` with Call and Text
+   open.
+5. In Stripe → Customers, the subscription reads **trialing**, renewing 7 days
+   out.
+6. In Supabase:
+
+   ```sql
+   select u.email, p.subscription_status, p.is_member, p.subscribed_until
+     from public.profiles p join auth.users u on u.id = p.id
+    order by p.subscribed_at desc nulls last limit 5;
+   ```
+
+   Expected: `trialing`, `is_member = true`, `subscribed_until` ≈ 7 days out.
+   If Stripe says trialing but Supabase does not, the **webhook** is wrong —
+   check Developers → Webhooks → your endpoint for failed deliveries.
+
+7. Then cancel that subscription in Stripe and confirm access ends at the
+   period end, not immediately.
+
+### Before flipping the switch
+
+- [ ] **Confirm Digital Social is activated for live payments.** This has not
+      been verified — a test key cannot see the live account, so the only way
+      to check is in the dashboard with Test mode off. Business details and a
+      bank account must be on file before any real charge can settle.
+- [x] ~~Delete the `activate-trial` function~~ — **already gone.** It granted a
+      trial with no payment method, bypassing Checkout entirely. Confirmed
+      absent from the deployed function list on 24 November 2026.
+- [ ] **Do not recreate coupon `VqytA1n6`** — 100% off **forever**, not once.
+      Created for testing. It exists only in the sandbox so it cannot leak
+      into live, but anyone holding the code would never pay. If a promo code
+      is wanted in live mode, give it a duration.
+- [ ] **Configure SMTP** (see `EMAIL-SETUP.md`). Without it nobody can confirm
+      their account or reset a password, so they cannot reach Checkout at all.
+- [ ] Turn email confirmation back on in Supabase once SMTP works.
+- [ ] **The Terms do not name the trial length.** Section 6 states $18.00/month
+      correctly, but Section 7 only says "we may offer free trial periods…
+      disclosed at the time of enrollment". Checkout does disclose "7 days
+      free", so this is defensible — but if the 7 days are meant to be a fixed
+      promise rather than a current offer, say so in Section 7.
+
+### If you need to go back to test mode
+
+Set the test secrets again and redeploy the same five functions. Live
+subscriptions are untouched; they are simply invisible to a test key.

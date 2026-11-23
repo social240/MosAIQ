@@ -210,6 +210,12 @@
       if (u.trialEnds && Date.now() > u.trialEnds) return false;
       return Boolean(u.member);
     },
+    // The admin dashboard reads real accounts, so there is nothing to mirror
+    // offline. It stays shut rather than showing invented rows.
+    async isAdmin() { return false; },
+    async adminSummary() { return null; },
+    async adminSignups() { return null; },
+    async adminTrials() { return null; },
     async profile() {
       const u = proto.read();
       return u ? { first_name: u.first, last_name: u.last, is_member: Boolean(u.member) } : null;
@@ -606,6 +612,46 @@
       if (!p) return false;
       const until = p.subscribed_until ? new Date(p.subscribed_until) : null;
       return Boolean(p.is_member) && (!until || until > new Date());
+    },
+
+    // ----- admin dashboard -------------------------------------------------
+    // Each of these calls a SECURITY DEFINER function that checks is_admin()
+    // in the database. The check is not here: a browser check is a courtesy to
+    // the person looking at the page, not a control. A non-admin calling these
+    // directly gets 42501 from Postgres.
+    //
+    // null means "could not tell" (signed out, offline, denied). The page
+    // shows the staff-only notice rather than an empty dashboard, so a network
+    // failure never reads as "nobody has signed up".
+    async isAdmin() {
+      const { data: sess } = await sb.auth.getSession();
+      if (!sess?.session) return false;
+      const { data, error } = await sb.rpc('is_admin');
+      if (error) {
+        console.warn('[RavMizAI] is_admin() unavailable:', error.message);
+        return false;
+      }
+      return data === true;
+    },
+
+    async adminSummary() {
+      const { data, error } = await sb.rpc('admin_get_summary');
+      if (error) { console.warn('[RavMizAI] admin_get_summary:', error.message); return null; }
+      return Array.isArray(data) ? (data[0] ?? null) : (data ?? null);
+    },
+
+    async adminSignups(stage, limit = 200) {
+      const { data, error } = await sb.rpc('admin_get_signups', {
+        p_stage: stage || null, p_limit: limit, p_offset: 0,
+      });
+      if (error) { console.warn('[RavMizAI] admin_get_signups:', error.message); return null; }
+      return data || [];
+    },
+
+    async adminTrials() {
+      const { data, error } = await sb.rpc('admin_get_trials');
+      if (error) { console.warn('[RavMizAI] admin_get_trials:', error.message); return null; }
+      return data || [];
     }
   };
 
@@ -652,6 +698,10 @@
     wallet: impl.wallet || (async () => null),
     ledger: impl.ledger || (async () => []),
     isSubscribed: impl.isSubscribed,
+    isAdmin: impl.isAdmin || (async () => false),
+    adminSummary: impl.adminSummary || (async () => null),
+    adminSignups: impl.adminSignups || (async () => null),
+    adminTrials: impl.adminTrials || (async () => null),
     startCheckout: impl.startCheckout,
     billingPortal: impl.billingPortal,
     requestPasswordReset: impl.requestPasswordReset,

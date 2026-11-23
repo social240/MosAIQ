@@ -1,0 +1,68 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin — RavMizAI</title><meta name="theme-color" content="#0C2147">
+<meta name="robots" content="noindex">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/site-common.css"></head><body class="appBody">
+
+<header class="appTop"><div class="wrap appNav"><a class="brand" href="home.html"><img src="../assets/logo-mark.png" alt="" width="47" height="48"><span>RavMiz<b>AI</b></span></a><nav class="appLinks"><a href="home.html">⌂ Home</a><a href="call-intro.html">✦ RavMizAI</a><a href="wallet.html">▣ Wallet</a><a href="preferences.html">☰ Preferences</a></nav><div class="userMenu" id="userMenu"><button class="iconbtn" id="userMenuBtn"><span class="userInitial">U</span></button><div class="userMenuPanel"><div class="userHead"><b class="userName">Member</b><small class="userEmail"></small></div><a href="preferences.html">Profile &amp; Preferences</a><a href="wallet.html">Wallet</a><a href="billing.html">Membership &amp; Billing</a><a href="admin.html" id="adminLink" hidden>Admin</a><a href="#" id="signOut">Sign out</a></div></div></div></header>
+
+<main class="appMain"><div class="wrap">
+
+ <div class="eyebrow">Admin</div>
+ <h1 class="appTitle" style="margin:12px 0 6px">Signups and trials</h1>
+ <p class="appSub" id="adminSub">Loading…</p>
+
+ <div id="adminDenied" class="appCard" style="display:none;text-align:center;padding:40px 24px">
+  <h2 class="h3" style="margin:0 0 10px">Not available</h2>
+  <p class="appSub" style="margin:0 0 18px">This page is for staff accounts.</p>
+  <a class="btn btn-primary" href="home.html">Back to home</a>
+ </div>
+
+ <div id="adminBody" style="display:none">
+
+  <!-- headline counts -->
+  <section class="adminStats" id="adminStats"></section>
+
+  <!-- money lives in Stripe -->
+  <section class="appCard" style="margin-top:22px">
+   <h2 class="h3" style="margin:0 0 8px">Financial reporting</h2>
+   <p class="appSub" style="margin:0 0 14px">
+    Revenue, refunds, failed payments, payouts and tax reporting are all in
+    Stripe, kept in step with every charge as it happens. Rebuilding those
+    figures here would only produce a second copy that can drift from the
+    money, so this page does not try.
+   </p>
+   <div class="adminLinks">
+    <a class="btn btn-outline" href="https://dashboard.stripe.com/billing" target="_blank" rel="noopener">Revenue &amp; MRR →</a>
+    <a class="btn btn-outline" href="https://dashboard.stripe.com/subscriptions" target="_blank" rel="noopener">Subscriptions →</a>
+    <a class="btn btn-outline" href="https://dashboard.stripe.com/payments" target="_blank" rel="noopener">Payments →</a>
+    <a class="btn btn-outline" href="https://dashboard.stripe.com/reports" target="_blank" rel="noopener">Reports →</a>
+   </div>
+  </section>
+
+  <!-- trials -->
+  <section class="appCard" style="margin-top:22px">
+   <h2 class="h3" style="margin:0 0 4px">Trials in progress</h2>
+   <p class="appSub" style="margin:0 0 16px">When each is due to be charged.</p>
+   <div id="adminTrials"><p class="appSub">Loading…</p></div>
+  </section>
+
+  <!-- funnel -->
+  <section class="appCard" style="margin-top:22px">
+   <h2 class="h3" style="margin:0 0 4px">Everyone who signed up</h2>
+   <p class="appSub" style="margin:0 0 14px">Where each account stopped, newest first.</p>
+   <div class="adminFilters" id="adminFilters">
+    <button type="button" class="chip isOn" data-stage="">All</button>
+    <button type="button" class="chip" data-stage="signed_up">Unconfirmed</button>
+    <button type="button" class="chip" data-stage="confirmed">No trial yet</button>
+    <button type="button" class="chip" data-stage="trialing">On trial</button>
+    <button type="button" class="chip" data-stage="paying">Paying</button>
+    <button type="button" class="chip" data-stage="lapsed">Lapsed</button>
+   </div>
+   <div id="adminSignups"><p class="appSub">Loading…</p></div>
+  </section>
+
+ </div>
+</div></main>
+
+<script src="../assets/vendor/supabase-js-2.119.0.js"></script><script src="../assets/supabase-config.js"></script><script src="../assets/auth.js"></script><script src="../assets/app.js"></script></body></html>

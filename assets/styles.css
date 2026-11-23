@@ -358,3 +358,43 @@ a.rec:hover span{transform:translateX(3px)}
 .dangerActions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
 .btn[aria-busy="true"]{opacity:.6;pointer-events:none}
 .dangerZone [hidden]{display:none!important}
+
+/* admin dashboard (app/admin.html) */
+.adminStats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:20px}
+.adminStat{background:#FFFFFF;border:1px solid var(--line);border-radius:var(--r);padding:18px 20px}
+.adminStat strong{display:block;font-family:var(--serif);font-weight:400;font-size:34px;line-height:1.1;color:var(--navy)}
+.adminStat span{display:block;margin-top:4px;font-size:13px;color:var(--muted)}
+.adminStat.is-good strong{color:var(--success)}
+.adminStat.is-bad  strong{color:var(--danger)}
+.adminStat.is-warn strong{color:var(--brown)}
+.adminStat.is-info strong{color:var(--accent)}
+.adminStat.is-muted strong{color:var(--ink2)}
+
+.adminLinks{display:flex;flex-wrap:wrap;gap:10px}
+.adminLinks .btn{min-height:42px;font-size:15px}
+
+.adminFilters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.adminFilters .chip{cursor:pointer;border:1px solid var(--line);background:var(--tint);color:var(--muted);font-family:inherit}
+.adminFilters .chip:hover{border-color:var(--accent);color:var(--navy)}
+.adminFilters .chip.isOn{background:var(--navy);border-color:var(--navy);color:#FFFFFF}
+
+/* The table scrolls sideways on a phone rather than squeezing columns to
+   nothing; tabindex makes that scroller reachable from the keyboard. */
+.adminTableWrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.adminTable{width:100%;border-collapse:collapse;font-size:14px;white-space:nowrap}
+.adminTable th{text-align:left;padding:10px 14px 10px 0;border-bottom:1px solid var(--line);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--brown);font-weight:700}
+.adminTable td{padding:12px 14px 12px 0;border-bottom:1px solid var(--line);color:var(--muted);vertical-align:middle}
+.adminTable tr:last-child td{border-bottom:0}
+.adminTable td:first-child{color:var(--navy);font-weight:600}
+
+.adminBadge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap}
+.adminBadge.is-good {background:#E7F6EC;color:var(--success)}
+.adminBadge.is-bad  {background:#FDECEA;color:var(--danger)}
+.adminBadge.is-warn {background:#FBF4E2;color:var(--brown)}
+.adminBadge.is-info {background:#E8F1FD;color:var(--accent)}
+.adminBadge.is-muted{background:var(--tint);color:var(--ink2)}
+
+@media(max-width:700px){
+ .adminStat strong{font-size:28px}
+ .adminLinks .btn{width:100%}
+}

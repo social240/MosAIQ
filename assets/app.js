@@ -229,8 +229,14 @@ function busy(form,on,label){
  // otherwise be picked up as the submit control.
  const b=form.querySelector('button[type=submit],button:not([type]):not(.pwToggle)');
  if(!b)return;
- if(on){b.dataset.label??=b.textContent;b.disabled=true;b.style.opacity='.6';b.style.cursor='wait';if(label)b.textContent=label;}
- else{b.disabled=false;b.style.opacity='';b.style.cursor='';if(b.dataset.label)b.textContent=b.dataset.label;}
+ if(on){b.dataset.busy='1';b.dataset.label??=b.textContent;b.disabled=true;b.style.opacity='.6';b.style.cursor='wait';if(label)b.textContent=label;}
+ else{
+  delete b.dataset.busy;
+  b.disabled=false;b.style.opacity='';b.style.cursor='';if(b.dataset.label)b.textContent=b.dataset.label;
+  // Re-enabling is unconditional, so anything that gates this button — the
+  // Terms checkbox — has to reapply itself afterwards.
+  form.dispatchEvent(new CustomEvent('rm:idle'));
+ }
 }
 // "Remember me" was a checkbox with no name and no handler, so nothing was
 // ever remembered. It now fills the email back in on the next visit.
@@ -548,6 +554,13 @@ async function appInit(){
  $$('.userInitial').forEach(e=>e.textContent=initial);
  $$('#userMenuBtn').forEach(btn=>{ if(!btn.querySelector('.userInitial'))btn.textContent=initial; });
 
+ // The Admin link ships hidden and is revealed only for staff. Hiding it is
+ // not what keeps the dashboard shut — every query behind it is checked
+ // against is_admin() in the database — it just keeps the menu honest.
+ RMAuth.isAdmin().then(yes=>{
+  if(yes)$$('#adminLink').forEach(a=>a.hidden=false);
+ }).catch(()=>{});
+
  // Sign out. The markup ships as a plain link to index.html, which only
  // changed page while leaving the session intact — so the next member page
  // let the visitor straight back in.
@@ -698,7 +711,15 @@ async function setupBalances(subscribed){
    set('#homeMinutes','Unlimited','voice'); set('#homeChats','Unlimited','text');
    set('#walletMinutes','Unlimited',''); set('#walletChats','Unlimited','');
   }else{
-   ['#homeMinutes','#homeChats','#walletMinutes','#walletChats'].forEach(s=>set(s,'—'));
+   // A new account genuinely has nothing, so say 0 rather than a dash. The
+   // dash is kept for the case below where the balance could not be read —
+   // "unknown" and "none" are different things and should not look alike.
+   //
+   // The labels are set explicitly, not left alone: the member branch above
+   // blanks the wallet ones and shortens the home ones, so a membership that
+   // lapses in this session would otherwise leave a bare "0" with no unit.
+   set('#homeMinutes','0','voice minutes'); set('#homeChats','0','text messages');
+   set('#walletMinutes','0','left');        set('#walletChats','0','chats');
   }
   const note=subscribed
    ? 'Voice and text conversations are unlimited for members right now.'
@@ -1209,9 +1230,206 @@ function setupCookieBanner(){
  if(!cookieConsentRead())cookieBannerShow();
 }
 
+// The Terms checkbox was validated only on submit, so the visitor filled the
+// whole form, pressed Continue, and only then learned they had missed a box.
+// The submit button now stays disabled until the box is ticked, which is what
+// the state of the form actually is.
+//
+// The submit-time check in setupSignup/setupTrial stays: a disabled button is
+// a convenience, not a control — it can be re-enabled from the console.
+function setupAgreeGate(){
+ $$('form').forEach(f=>{
+  const box=f.querySelector('[name=agree]');
+  if(!box)return;
+  const btn=f.querySelector('button[type=submit],button:not([type]):not(.pwToggle)');
+  if(!btn)return;
+
+  const sync=()=>{
+   // Never fight busy(): while a submit is in flight it owns the button.
+   if(btn.dataset.busy==='1')return;
+   const okNow=box.checked;
+   btn.disabled=!okNow;
+   btn.style.opacity=okNow?'':'.45';
+   btn.style.cursor=okNow?'':'not-allowed';
+   btn.setAttribute('aria-disabled',String(!okNow));
+  };
+
+  box.addEventListener('change',()=>{
+   sync();
+   // Clear the nag once they comply. Deferred, so a submit handler that wrote
+   // the message in the same tick does not immediately write it back.
+   if(box.checked)setTimeout(()=>{
+    const e=$('#formError');
+    if(e&&/agree/i.test(e.textContent||''))e.style.display='none';
+   },0);
+  });
+  sync();
+  // busy(false) re-enables the button on error; re-apply the gate after it.
+  f.addEventListener('rm:idle',sync);
+  // A submit handler that bails out early never reaches busy(), so there is no
+  // rm:idle to hook. Re-apply the gate after every submit attempt instead,
+  // once the handlers ahead of this one have had their turn.
+  f.addEventListener('submit',()=>setTimeout(sync,0));
+ });
+}
+
+/* ---------------------------------------------------------------------------
+   Admin dashboard (app/admin.html)
+   ---------------------------------------------------------------------------
+   Answers the two questions Stripe cannot: who signed up, and where they got
+   stuck. A signup that never reached Checkout leaves no trace in Stripe at
+   all, so it is invisible there.
+
+   Money is deliberately not restated here. Stripe holds every charge, refund
+   and payout with reconciliation already done; a second copy would only drift
+   from the real figures. The page links out instead.
+
+   Every read goes through a SECURITY DEFINER function that checks is_admin()
+   in the database. The check below is for the person looking at the page, not
+   a control — a non-admin calling the functions directly is refused by
+   Postgres with 42501.
+   --------------------------------------------------------------------------- */
+
+const ADMIN_STAGES = {
+ signed_up: { label: 'Unconfirmed', tone: 'warn' },
+ confirmed: { label: 'No trial yet', tone: 'muted' },
+ trialing : { label: 'On trial',     tone: 'info' },
+ paying   : { label: 'Paying',       tone: 'good' },
+ lapsed   : { label: 'Lapsed',       tone: 'bad' },
+};
+
+function adminEsc(s){
+ return String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function adminDate(v){
+ if(!v)return '—';
+ const d=new Date(v); if(isNaN(d))return '—';
+ return d.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});
+}
+
+function adminBadge(stage){
+ const s=ADMIN_STAGES[stage]||{label:stage||'—',tone:'muted'};
+ return `<span class="adminBadge is-${s.tone}">${adminEsc(s.label)}</span>`;
+}
+
+async function setupAdmin(){
+ const body=$('#adminBody'), denied=$('#adminDenied'), sub=$('#adminSub');
+ if(!body||!denied)return;
+
+ const shut=msg=>{
+  body.style.display='none';
+  denied.style.display='';
+  if(sub)sub.textContent=msg;
+ };
+
+ if(typeof RMAuth==='undefined'||!await RMAuth.isAdmin()){
+  shut('');
+  return;
+ }
+
+ body.style.display='';
+ denied.style.display='none';
+
+ // ---- headline counts ----
+ const summary=await RMAuth.adminSummary();
+ const stats=$('#adminStats');
+ if(stats){
+  if(!summary){
+   stats.innerHTML='<p class="appSub">Figures unavailable right now. Please refresh.</p>';
+  }else{
+   const cards=[
+    ['Total signups',      summary.total_signups,       ''],
+    ['Paying',             summary.paying,              'good'],
+    ['On trial',           summary.on_trial,            'info'],
+    ['Never started',      summary.never_started_trial, 'muted'],
+    ['Stuck unconfirmed',  summary.stuck_unconfirmed,   'warn'],
+    ['Lapsed',             summary.lapsed,              'bad'],
+   ];
+   stats.innerHTML=cards.map(([label,n,tone])=>
+    `<div class="adminStat${tone?' is-'+tone:''}"><strong>${Number(n)||0}</strong><span>${adminEsc(label)}</span></div>`
+   ).join('')
+   +`<div class="adminStat"><strong>${Number(summary.signups_7d)||0}</strong><span>Signed up this week</span></div>`;
+  }
+ }
+ if(sub&&summary){
+  sub.textContent=`${summary.total_signups} account${summary.total_signups===1?'':'s'} in total, `
+   +`${summary.signups_30d} in the last 30 days.`;
+ }
+
+ // ---- trials ----
+ const trialBox=$('#adminTrials');
+ if(trialBox){
+  const rows=await RMAuth.adminTrials();
+  if(rows===null){
+   trialBox.innerHTML='<p class="appSub">Trials unavailable right now. Please refresh.</p>';
+  }else if(!rows.length){
+   trialBox.innerHTML='<p class="appSub">No trials running.</p>';
+  }else{
+   trialBox.innerHTML=adminTable(
+    ['Email','Charged on','Days left','Card'],
+    rows.map(r=>[
+     adminEsc(r.email),
+     adminDate(r.converts_at),
+     r.days_remaining==null?'—':String(r.days_remaining),
+     r.will_not_convert
+      ? '<span class="adminBadge is-warn">No card — will not convert</span>'
+      : adminEsc([r.card_brand,r.card_last4&&('•••• '+r.card_last4)].filter(Boolean).join(' ')||'on file'),
+    ])
+   );
+  }
+ }
+
+ // ---- funnel, with filters ----
+ const listBox=$('#adminSignups');
+ const renderSignups=async stage=>{
+  if(!listBox)return;
+  listBox.innerHTML='<p class="appSub">Loading…</p>';
+  const rows=await RMAuth.adminSignups(stage);
+  if(rows===null){
+   listBox.innerHTML='<p class="appSub">List unavailable right now. Please refresh.</p>';
+   return;
+  }
+  if(!rows.length){
+   listBox.innerHTML='<p class="appSub">Nobody at this stage.</p>';
+   return;
+  }
+  listBox.innerHTML=adminTable(
+   ['Email','Name','Signed up','Via','Stage','Where they stopped'],
+   rows.map(r=>[
+    adminEsc(r.email),
+    adminEsc(r.name),
+    adminDate(r.signed_up_at),
+    adminEsc(r.signup_via),
+    adminBadge(r.stage),
+    adminEsc(r.stalled_because||'—'),
+   ])
+  );
+ };
+
+ $$('#adminFilters .chip').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+   $$('#adminFilters .chip').forEach(b=>b.classList.remove('isOn'));
+   btn.classList.add('isOn');
+   renderSignups(btn.dataset.stage||'');
+  });
+ });
+ renderSignups('');
+}
+
+// Cells are pre-escaped by the caller, which also lets a cell carry a badge.
+function adminTable(headers,rows){
+ return '<div class="adminTableWrap"><table class="adminTable"><thead><tr>'
+  +headers.map(h=>`<th>${adminEsc(h)}</th>`).join('')
+  +'</tr></thead><tbody>'
+  +rows.map(cells=>'<tr>'+cells.map(c=>`<td>${c}</td>`).join('')+'</tr>').join('')
+  +'</tbody></table></div>';
+}
+
 document.addEventListener('DOMContentLoaded',()=>{
  navInit();setupPrefs();setupDeleteAccount();setupTranscript();setupCallControls();setupPasswordToggles();
  setupCookieBanner();
+ setupAgreeGate();
  // The auth-aware pages need assets/auth.js. Fail loudly rather than silently
  // leaving a form that looks live but does nothing.
  if(typeof RMAuth==='undefined'){
@@ -1221,5 +1439,6 @@ document.addEventListener('DOMContentLoaded',()=>{
   }
   return;
  }
+ setupAdmin();
  setupForgot();setupReset();setupLogin();setupGoogle();setupSignup('#signupForm');setupVerify();setupTrialHandoff();setupTrial();setupPayment();appInit();publicNavInit();
 });
