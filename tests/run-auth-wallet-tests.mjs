@@ -193,14 +193,19 @@ const FLASH_SAMPLER = () => {
     });
 
     // 9a/9b. Enumeration at sign-up and log-in ---------------------------------
-    await step('9a', 'Enumeration: sign-up page', async () => {
+    // 9a. Since 2026-11-25 the sign-up page says when an email already has an
+    // account: Mike signed up with his own address and waited for a code that
+    // Supabase never sends to a taken address. This replaces the earlier rule
+    // of saying nothing; Supabase's own answer (identities: []) shows it anyway.
+    await step('9a', 'Sign-up with a taken email', async () => {
       const ctx = await browser.newContext(); const p = await ctx.newPage();
       let res; try { res = await submitSignup(p, A, strongPw()); } finally { await ctx.close(); }
       const n = (await one(`select count(*)::int as n from auth.users where lower(email) = lower('${A}')`)).n;
-      record('9a', 'Enumeration: sign-up page', res.where === 'verify' && n === 1 ? 'PASS' : 'FAIL',
-        res.where === 'verify'
-          ? `signing up with an email that already has an account goes on to the code page ("${res.text}"), exactly like a new sign-up: nothing tells the visitor the address is taken, and Supabase sends no email; accounts with that email: ${n}`
-          : `signing up with an email that has an account shows: "${res.text || 'nothing within 20s'}"${/already/i.test(res.text) ? ' (tells anyone the address has an account)' : ''}; the API itself answered HTTP ${dup && dup.status} "${dup && msg(dup.data)}"`);
+      const told = res.where === 'error' && /already has an account/i.test(res.text);
+      record('9a', 'Sign-up with a taken email', told && n === 1 ? 'PASS' : 'FAIL',
+        told
+          ? `signing up with an email that already has an account stays on the form and says: "${res.text}"; accounts with that email: ${n}`
+          : `signing up with an email that has an account ${res.where === 'verify' ? `goes on to the code page ("${res.text}"), where no code will ever arrive` : `shows: "${res.text || 'nothing within 20s'}"`}; accounts with that email: ${n}`);
     });
     await step('9b', 'Enumeration: log-in', async () => {
       const bad = 'Wrong!' + RUN + 'x9';

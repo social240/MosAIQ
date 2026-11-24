@@ -48,13 +48,14 @@
   // --- shared helpers ------------------------------------------------------
 
   // Supabase surfaces real auth failures with messages that are fine to show,
-  // but we normalise the common ones so we never leak whether an email exists.
+  // but we normalise the common ones. Log-in and password reset answer the
+  // same for every address; only sign-up says an email already has an account.
   function friendly(err) {
     const m = String(err?.message || err || '').toLowerCase();
     if (m.includes('invalid login credentials')) return 'Email or password is incorrect.';
     if (m.includes('email not confirmed')) return 'Please verify your email before signing in.';
     if (m.includes('user already registered') || m.includes('already been registered'))
-      return 'An account with that email already exists. Try signing in instead.';
+      return 'This email already has an account. Please sign in, or use a different email.';
     // Supabase answers a mistyped code and an old one with the same message.
     if (m.includes('token has expired or is invalid'))
       return 'That code is not correct or has expired. Check the newest email, or request a new code below.';
@@ -249,13 +250,21 @@
       });
       if (error) throw error;
 
+      // For an address that already has a confirmed account, Supabase answers
+      // 200 with identities === [] and sends no email. Say so here, instead of
+      // sending the visitor to a code page whose code never arrives. (Asked
+      // for on 2026-11-25. This tells the visitor the address has an account,
+      // which the page used to hide; Supabase's own answer shows it anyway.)
+      if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+        const taken = new Error('User already registered');
+        taken.code = 'user_already_exists';
+        throw taken;
+      }
+
       localStorage.setItem('rm_verify_email', email);
 
       // With "Confirm email" on, Supabase returns a user with no session until
-      // the code is entered. For an address that already has an account it
-      // answers the same way (identities === [], and no email is sent), so the
-      // sign-up form cannot be used to find out who is a member. Both go to the
-      // code page, which offers "Sign in" to people who already have an account.
+      // the code is entered.
       return { needsVerification: !data?.session };
     },
 

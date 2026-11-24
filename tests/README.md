@@ -47,7 +47,8 @@ most of it.
 | 6 | Signed-out access | The 7 member pages, the data tables, and the admin and server functions refuse a signed-out visitor, and no member page shows for even one frame. |
 | 7a, 7b | Member limits | A signed-in member tries to make itself a paid member, write its wallet, history or trial, call admin functions, and call the old activate-trial function. |
 | 8a, 8b | Account deletion | Members can ask for deletion; deleting an account removes its profile, wallet, history and trials. |
-| 9a–9c | Email enumeration | Sign-up, log-in and reset answers for a known versus an unknown email (signing up with a known email goes to the code page like a new one). |
+| 9a | Sign-up with a taken email | Since 2026-11-25 the sign-up form says the email already has an account and asks the visitor to sign in, instead of going to a code page where no code arrives. |
+| 9b–9c | Email enumeration | Log-in and password reset answer the same for a known and an unknown email. |
 | 10 | Rate limiting | Wrong passwords until Supabase blocks; whether CAPTCHA is on. |
 | A1–A10 | Wallet | Starting balance, funding, deductions, who decides the charge, history, duplicate and concurrent charges, insufficient balance, Stripe events, and the balance shown after a refresh. |
 
