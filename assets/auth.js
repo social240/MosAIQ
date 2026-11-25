@@ -727,20 +727,22 @@
       return false;
     },
 
-    // Mirrors the signed-in user into the shape the existing member pages read,
-    // so app/*.html keep working unchanged.
+    // The pages read the signed-in user from currentUser(), so under live auth
+    // no copy of it is kept: the old `rm_user` mirror held the name and email in
+    // plain text for no reader that needed it. Copies left by earlier visits are
+    // removed here, on every member page load. The offline prototype keeps its
+    // record, since LocalStorage is that mode's only store.
     async syncLegacyUser() {
       const u = await impl.currentUser();
+      if (LIVE) {
+        try { localStorage.removeItem('rm_user'); } catch (e) { /* storage unavailable */ }
+        return u;
+      }
       if (!u) return null;
       const prev = (() => { try { return JSON.parse(localStorage.getItem('rm_user') || '{}'); } catch (e) { return {}; } })();
-      const merged = Object.assign({}, prev, {
+      localStorage.setItem('rm_user', JSON.stringify(Object.assign({}, prev, {
         first: u.firstName, last: u.lastName, email: u.email, verified: true
-      });
-      // Under live auth Supabase holds the credential, so no password belongs in
-      // storage. In offline fallback mode it is the only credential store, so
-      // removing it here would make the next sign-in impossible.
-      if (LIVE) delete merged.password;
-      localStorage.setItem('rm_user', JSON.stringify(merged));
+      })));
       return u;
     }
   };

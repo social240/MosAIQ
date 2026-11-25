@@ -173,10 +173,6 @@ function setupPasswordToggles(){
 function showErr(msg,el='#formError'){const e=$(el);if(e){e.textContent=msg;e.style.display='block';}}
 function showOk(msg,el='#formSuccess'){const e=$(el);if(e){e.textContent=msg;e.style.display='block';}}
 function clearMsg(){['#formError','#formSuccess'].forEach(s=>{const e=$(s);if(e)e.style.display='none';});}
-function storeUser(u){localStorage.setItem('rm_user',JSON.stringify(u))}
-function getUser(){try{return JSON.parse(localStorage.getItem('rm_user')||'null')}catch(e){return null}}
-
-function emailFromUser(){const u=getUser();return u?.email||'member@ravmizai.com'}
 
 function setupSignup(formId, next='verify.html'){
  const f=$(formId); if(!f)return;
@@ -442,7 +438,7 @@ function setupReset(){
 function setupVerify(){
  const f=$('#verifyForm'); if(!f)return;
  const stored=localStorage.getItem('rm_verify_email');
- const addr=stored||getUser()?.email||'your email';
+ const addr=stored||'your email';
  const email=$('#verifyEmail'); if(email)email.textContent=addr;
  // The fixed-code hint only applies to the offline prototype.
  if(RMAuth.isLive)$$('.protoHint').forEach(el=>el.remove());
@@ -522,7 +518,7 @@ function setupTrial(){
 // Guard the page so a signed-out visitor is not left on a dead end.
 function setupPayment(){
  if(!$('#startCheckout')||!/trial\//.test(location.pathname))return;
- RMAuth.currentUser().then(cu=>{ if(!cu&&!getUser()?.verified)location.href='free-trial.html'; });
+ RMAuth.currentUser().then(cu=>{ if(!cu)location.href='free-trial.html'; });
  // The trial page is not an appBody page, so appInit() never runs here and the
  // checkout button has to be wired explicitly.
  setupCheckoutButton();
@@ -759,6 +755,9 @@ async function setupBalances(subscribed){
 
 // Membership block on the wallet page. It read "Member · Active" for everyone,
 // including lapsed accounts — the same contradiction the billing page had.
+// A trial says when it ends: "Renews" implied a paid period that a trial has
+// not had. The profile does not record a cancelled trial, so this does not
+// promise a first charge (the Billing page, which asks Stripe, does).
 async function setupWalletMembership(subscribed){
  const label=$('#walletMemberLabel'); if(!label)return;
  const chip=$('#walletMemberChip'), note=$('#walletMemberNote');
@@ -773,9 +772,11 @@ async function setupWalletMembership(subscribed){
   chip.style.borderColor=subscribed?'':'#E7B9BC';
  }
  if(note){
-  note.textContent=subscribed
-   ? (until?'Renews '+until.toLocaleDateString()+'.':'Active with no expiry set.')
-   : 'Start a membership to use voice calls and text conversations.';
+  const when=fmtDate(until);
+  note.textContent=!subscribed ? 'Start a membership to use voice calls and text conversations.'
+   : !when ? 'Active with no expiry set.'
+   : p?.subscription_status==='trialing' ? `Trial ends ${when}.`
+   : `Renews ${when}.`;
  }
 }
 
