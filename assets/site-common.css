@@ -55,6 +55,10 @@ html.menuOpen,html.menuOpen body{overflow:hidden}
 .social a{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:999px;color:var(--navy,#0C2147);text-decoration:none;transition:background .15s,color .15s}
 .social a:hover{background:var(--tint,#F3F6FB);color:var(--accent,#1668D6)}
 .social svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+/* Brand marks (simple-icons, CC0) are solid shapes, unlike the outline link icon. */
+.social svg.brand{width:20px;height:20px;fill:currentColor;stroke:none}
+/* 12 links: at 40px they fit one row in the site footer on desktop; phones keep 44px touch targets. */
+@media (min-width:901px){.footer .social a{width:40px;height:40px}}
 .footer .social{margin-top:6px;margin-bottom:10px}
 
 /* cookie consent banner — built by setupCookieBanner() in assets/app.js.
