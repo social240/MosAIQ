@@ -128,9 +128,22 @@ Deno.serve(async (req) => {
     // 3. Apply what Stripe says (same code as the webhook; repeat-safe).
     if (sub) await applySubscription(admin, sub, sub.status, user.id);
 
-    // 4. Card on file: the subscription's, else the customer's default.
+    // 4. Card on file: the subscription's, else the customer's default, else
+    //    any card attached to the customer -- the same order as the webhook's
+    //    refreshCardSummary. A trial started through Checkout can leave both
+    //    defaults empty while the Billing Portal lists the card, and the
+    //    Billing page then said "No card on file". A failed lookup here only
+    //    costs the card line, never the sync.
     let card = sub?.default_payment_method?.card ?? null;
     if (!card?.last4) card = cust?.invoice_settings?.default_payment_method?.card ?? null;
+    if (!card?.last4) {
+      try {
+        const pms = await stripeGet(stripeKey, `payment_methods?customer=${encodeURIComponent(customer)}&type=card&limit=1`);
+        card = pms?.data?.[0]?.card ?? null;
+      } catch (e) {
+        console.warn('sync-membership: card lookup skipped:', (e as Error).message);
+      }
+    }
     if (card?.last4) {
       await admin.rpc('set_card_summary', { p_customer_id: customer, p_brand: card.brand ?? null, p_last4: card.last4 });
     }
