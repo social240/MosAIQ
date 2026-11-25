@@ -529,7 +529,7 @@ function setupPayment(){
 }
 // Pages that require an active membership, not just a login. Compared without
 // the extension, since some hosts serve these as clean URLs (/app/chat).
-const MEMBER_ONLY=['call-intro','chat'];
+const MEMBER_ONLY=['call-intro','call','chat'];
 function pageName(){
  return (location.pathname.split('/').pop()||'home').replace(/\.html$/,'');
 }
@@ -646,7 +646,7 @@ function setupSubscribeGate(subscribed){
  // Call and Text are the same membership — one subscription covers both, so
  // they gate identically. lets-chat.html stays listed because older markup
  // pointed Text at that public page.
- const targets=['call-intro.html','chat.html','../lets-chat.html','lets-chat.html'];
+ const targets=['call-intro.html','call.html','chat.html','../lets-chat.html','lets-chat.html'];
  $$('a.btn').forEach(a=>{
   const href=a.getAttribute('href')||'';
   if(!targets.includes(href))return;
@@ -1047,57 +1047,6 @@ function setupDeleteAccount(){
   }
  });
 }
-// Call controls on chat.html. The call itself is still a prototype, so these
-// drive the on-screen state rather than real audio.
-function setupCallControls(){
- const mute=$('#btnMute'), pause=$('#btnPause'), text=$('#btnText'), end=$('#btnEnd');
- if(!mute&&!pause&&!text&&!end)return;
- const status=$('#callStatus');
- const setStatus=s=>{ if(status)status.textContent=s; };
-
- const toggle=(btn,onLabel,offLabel)=>{
-  if(!btn)return;
-  btn.onclick=()=>{
-   const on=btn.getAttribute('aria-pressed')==='true';
-   btn.setAttribute('aria-pressed',String(!on));
-   btn.setAttribute('aria-label',!on?onLabel:offLabel);
-  };
- };
- toggle(mute,'Unmute microphone','Mute microphone');
- toggle(pause,'Resume call','Pause call');
-
- // Reflect combined state in the status line.
- const sync=()=>{
-  if(pause?.getAttribute('aria-pressed')==='true')setStatus('Paused');
-  else if(mute?.getAttribute('aria-pressed')==='true')setStatus('Muted');
-  else setStatus('Listening…');
- };
- [mute,pause].forEach(b=>b&&b.addEventListener('click',sync));
-
- if(text)text.onclick=()=>{ const t=$('#transcript'); if(t)t.scrollIntoView({behavior:'smooth',block:'center'}); };
-
- if(end)end.onclick=async()=>{
-  const yes=await confirmModal({
-   title:'End this call?',
-   message:'Your conversation will close and the remaining time stays on your wallet.',
-   confirmText:'End call',
-   cancelText:'Keep talking',
-   danger:true
-  });
-  if(yes)location.href='home.html';
- };
-}
-function setupTranscript(){
- const transcript=$('#transcript'); if(!transcript)return;
- const sample=[
- ['RavMizAI',"Shalom. Good to have you back. What's on your mind today?"],
- ['You',"I wanted to talk about how heavy the world feels right now."],
- ['RavMizAI',"I hear that. When the world feels heavy, it can affect emunah, focus, and your sense of safety. What part is weighing on you most?"],
- ['You',"I feel like I should be doing more."],
- ['RavMizAI',"That desire can be meaningful. Before deciding what action to take, it helps to separate clear responsibility from fear or pressure. What is one concrete area where you already have influence?"]
- ];
- transcript.innerHTML=sample.map(([who,msg])=>`<div class="msg ${who==='You'?'you':''}"><b>${who}</b><div class="bubble">${msg}</div></div>`).join('');
-}
 /* ---------------------------------------------------------------------------
    Cookie consent banner
    ---------------------------------------------------------------------------
@@ -1427,7 +1376,7 @@ function adminTable(headers,rows){
 }
 
 document.addEventListener('DOMContentLoaded',()=>{
- navInit();setupPrefs();setupDeleteAccount();setupTranscript();setupCallControls();setupPasswordToggles();
+ navInit();setupPrefs();setupDeleteAccount();setupPasswordToggles();
  setupCookieBanner();
  setupAgreeGate();
  // The auth-aware pages need assets/auth.js. Fail loudly rather than silently

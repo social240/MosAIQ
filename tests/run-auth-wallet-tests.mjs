@@ -32,7 +32,7 @@ const PAT = process.env.SUPABASE_ACCESS_TOKEN || fromDotEnv('SUPABASE_ACCESS_TOK
 const RUN = Date.now().toString(36);
 const mail = tag => `autotest+${RUN}.${tag}@${DOMAIN}`;
 const NOBODY = `nobody-${RUN}@${DOMAIN}`;
-const APP_PAGES = ['home', 'wallet', 'billing', 'preferences', 'subscribe', 'call-intro', 'chat'];
+const APP_PAGES = ['home', 'wallet', 'billing', 'preferences', 'subscribe', 'call-intro', 'call', 'chat'];
 const ADMIN_FUNCTIONS = ['set_subscription', 'grant_credit', 'record_usage', 'start_trial', 'expire_trials',
   'apply_stripe_subscription', 'link_stripe_customer', 'set_card_summary', 'apply_allowance', 'apply_stripe_allowance'];
 

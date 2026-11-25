@@ -44,7 +44,7 @@ most of it.
 | 3a–3d | Password reset | Supabase hands the email to the mail service and it answers OK; repeated requests are limited; a reset link works once, then is refused; the reset page changes the password end to end. |
 | 4 | Google sign-in duplicates | Database: no email has two accounts; Google joins the existing account. |
 | 5 | Staying signed in | Refresh, close and reopen the browser, sign out and reopen. |
-| 6 | Signed-out access | The 7 member pages, the data tables, and the admin and server functions refuse a signed-out visitor, and no member page shows for even one frame. |
+| 6 | Signed-out access | The 8 member pages, the data tables, and the admin and server functions refuse a signed-out visitor, and no member page shows for even one frame. |
 | 7a, 7b | Member limits | A signed-in member tries to make itself a paid member, write its wallet, history or trial, call admin functions, and call the old activate-trial function. |
 | 8a, 8b | Account deletion | Members can ask for deletion; deleting an account removes its profile, wallet, history and trials. |
 | 9a | Sign-up with a taken email | Since 2026-11-25 the sign-up form says the email already has an account and asks the visitor to sign in, instead of going to a code page where no code arrives. |
