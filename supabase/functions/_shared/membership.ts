@@ -67,3 +67,16 @@ export async function stripeGet(key: string, path: string) {
   if (!res.ok) throw new Error(body?.error?.message || `Stripe ${path.split('?')[0]} failed`);
   return body;
 }
+
+// What the Billing page shows for a saved payment method. A card gives its
+// brand and last four digits. Link (Stripe's saved-checkout wallet) does not
+// share the card behind it, so it is recorded as brand "link" with no digits;
+// Checkout offers Link by default, and a member who paid with it otherwise
+// showed "No card on file". Anything else (an id string, an unknown type)
+// gives null.
+export function cardSummary(pm: any): { brand: string; last4: string | null; email: string | null } | null {
+  if (!pm || typeof pm !== 'object') return null;
+  if (pm.card?.last4) return { brand: pm.card.brand ?? 'card', last4: pm.card.last4, email: null };
+  if (pm.type === 'link' || pm.link) return { brand: 'link', last4: null, email: pm.link?.email ?? null };
+  return null;
+}

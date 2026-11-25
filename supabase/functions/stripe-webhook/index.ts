@@ -62,13 +62,14 @@ async function verify(body: string, header: string, secret: string): Promise<boo
 
 // Membership and wallet logic shared with sync-membership, so the two paths
 // that apply a subscription can never disagree.
-import { applySubscription, call } from '../_shared/membership.ts';
+import { applySubscription, call, cardSummary } from '../_shared/membership.ts';
 import { applyRefund } from './refund.ts';
 
-// Records the brand and last four digits of the card now on file, so the
-// billing page can show something real. Nothing sensitive is stored, and a
-// failure here must never fail the webhook -- the subscription state matters
-// more than the display detail.
+// Records the brand and last four digits of the card now on file (or "link"
+// for a Link wallet, which shares no digits), so the billing page can show
+// something real. Nothing sensitive is stored, and a failure here must never
+// fail the webhook -- the subscription state matters more than the display
+// detail.
 async function refreshCardSummary(admin: any, stripeKey: string, customerId: string) {
   const get = (path: string) =>
     fetch('https://api.stripe.com/v1/' + path, {
@@ -76,33 +77,32 @@ async function refreshCardSummary(admin: any, stripeKey: string, customerId: str
     }).then(r => r.json());
 
   try {
-    let card: any = null;
-
     // 1. The customer's default, when one is set (portal changes land here).
     const cust = await get(
       `customers/${customerId}?expand[]=invoice_settings.default_payment_method`,
     );
-    card = cust?.invoice_settings?.default_payment_method?.card ?? null;
+    let card = cardSummary(cust?.invoice_settings?.default_payment_method);
 
-    // 2. Checkout attaches the card to the subscription rather than setting a
-    //    customer default, so look there next.
-    if (!card?.last4) {
+    // 2. Checkout attaches the payment method to the subscription rather than
+    //    setting a customer default, so look there next.
+    if (!card) {
       const subs = await get(
         `subscriptions?customer=${customerId}&limit=1&expand[]=data.default_payment_method`,
       );
-      card = subs?.data?.[0]?.default_payment_method?.card ?? null;
+      card = cardSummary(subs?.data?.[0]?.default_payment_method);
     }
 
-    // 3. Otherwise fall back to whatever card is attached to the customer.
-    if (!card?.last4) {
-      const pms = await get(`payment_methods?customer=${customerId}&type=card&limit=1`);
-      card = pms?.data?.[0]?.card ?? null;
+    // 3. Otherwise fall back to whatever is attached to the customer, of any
+    //    type (a type=card filter skipped Link).
+    if (!card) {
+      const pms = await get(`customers/${customerId}/payment_methods?limit=1`);
+      card = cardSummary(pms?.data?.[0]);
     }
 
-    if (!card?.last4) return;
+    if (!card) return;
     await admin.rpc('set_card_summary', {
       p_customer_id: customerId,
-      p_brand: card.brand ?? null,
+      p_brand: card.brand,
       p_last4: card.last4,
     });
   } catch (e) {

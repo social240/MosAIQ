@@ -25,7 +25,7 @@
 //   npx supabase functions deploy sync-membership
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { applySubscription, iso, periodEnd, stripeGet } from '../_shared/membership.ts';
+import { applySubscription, cardSummary, iso, periodEnd, stripeGet } from '../_shared/membership.ts';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -128,24 +128,22 @@ Deno.serve(async (req) => {
     // 3. Apply what Stripe says (same code as the webhook; repeat-safe).
     if (sub) await applySubscription(admin, sub, sub.status, user.id);
 
-    // 4. Card on file: the subscription's, else the customer's default, else
-    //    any card attached to the customer -- the same order as the webhook's
-    //    refreshCardSummary. A trial started through Checkout can leave both
-    //    defaults empty while the Billing Portal lists the card, and the
-    //    Billing page then said "No card on file". A failed lookup here only
-    //    costs the card line, never the sync.
-    let card = sub?.default_payment_method?.card ?? null;
-    if (!card?.last4) card = cust?.invoice_settings?.default_payment_method?.card ?? null;
-    if (!card?.last4) {
+    // 4. Payment method on file: the subscription's, else the customer's
+    //    default, else any payment method attached to the customer -- the same
+    //    order as the webhook's refreshCardSummary. cardSummary() also accepts
+    //    Link, which carries no card digits. A failed lookup here only costs
+    //    the card line, never the sync.
+    let card = cardSummary(sub?.default_payment_method) ?? cardSummary(cust?.invoice_settings?.default_payment_method);
+    if (!card) {
       try {
-        const pms = await stripeGet(stripeKey, `payment_methods?customer=${encodeURIComponent(customer)}&type=card&limit=1`);
-        card = pms?.data?.[0]?.card ?? null;
+        const pms = await stripeGet(stripeKey, `customers/${encodeURIComponent(customer)}/payment_methods?limit=1`);
+        card = cardSummary(pms?.data?.[0]);
       } catch (e) {
         console.warn('sync-membership: card lookup skipped:', (e as Error).message);
       }
     }
-    if (card?.last4) {
-      await admin.rpc('set_card_summary', { p_customer_id: customer, p_brand: card.brand ?? null, p_last4: card.last4 });
+    if (card) {
+      await admin.rpc('set_card_summary', { p_customer_id: customer, p_brand: card.brand, p_last4: card.last4 });
     }
 
     // 5. Billing history and the next charge.
@@ -175,7 +173,7 @@ Deno.serve(async (req) => {
       period_end: sub ? periodEnd(sub) : null,
       cancel_at_period_end: !!sub?.cancel_at_period_end,
       next_charge,
-      card: card?.last4 ? { brand: card.brand ?? 'card', last4: card.last4 } : null,
+      card,
       invoices,
     });
   } catch (e) {

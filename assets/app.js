@@ -908,7 +908,7 @@ async function setupBillingPage(subscribed){
  renderBilling({
   status:st, is_member:subscribed, period_end:p?.subscribed_until,
   trial_end:st==='trialing'?p?.subscribed_until:null,
-  card:p?.card_last4?{brand:p.card_brand,last4:p.card_last4}:null
+  card:p?.card_brand?{brand:p.card_brand,last4:p.card_last4}:null
  },false);
 
  let s=null;
@@ -955,8 +955,12 @@ function renderBilling(s,fromStripe){
  if(note)note.textContent=text;
  if(cta)cta.style.display=cta1?'':'none';
 
+ // Link (Stripe's saved-checkout wallet) shares no card digits, only the
+ // member's Link email, which the server sends with the summary.
  const card=$('#cardSummary');
- if(card)card.textContent=s.card?.last4
+ if(card)card.textContent=s.card?.brand==='link'
+  ? (s.card.email?`Saved with Link (${s.card.email})`:'Saved with Link')
+  : s.card?.last4
   ? `${String(s.card.brand||'card').replace(/^./,c=>c.toUpperCase())} ending in ${s.card.last4}`
   : 'No card on file';
  if(!fromStripe)return;
@@ -1323,7 +1327,7 @@ async function setupAdmin(){
      r.days_remaining==null?'—':String(r.days_remaining),
      r.will_not_convert
       ? '<span class="adminBadge is-warn">No card — will not convert</span>'
-      : adminEsc([r.card_brand,r.card_last4&&('•••• '+r.card_last4)].filter(Boolean).join(' ')||'on file'),
+      : adminEsc(r.card_brand==='link'?'Link':[r.card_brand,r.card_last4&&('•••• '+r.card_last4)].filter(Boolean).join(' ')||'on file'),
     ])
    );
   }
