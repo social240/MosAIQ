@@ -13,10 +13,11 @@
 
 [build]
   # After writing the config, drop repo-only material from the deploy: the SQL,
-  # the Edge Function sources, the test suite and the Markdown notes (README,
-  # DEPLOY, STRIPE, EOD reports). The whole repo folder is published, so
-  # without this they are served to anyone who guesses the address.
-  command = "node build-config.js && rm -rf sql supabase tests ./*.md"
+  # the Edge Function sources, the test suite, the GitHub workflows and the
+  # Markdown notes (README, DEPLOY, STRIPE, EOD reports). The whole repo folder
+  # is published, so without this they are served to anyone who guesses the
+  # address.
+  command = "node build-config.js && rm -rf sql supabase tests .github ./*.md"
   publish = "."
 
 # Clean URLs: /about instead of /about.html

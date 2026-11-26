@@ -1,0 +1,46 @@
+# Copies main to https://github.com/social240/MosAIQ after every push.
+#
+# teDdyMucho/MosAIQ is the main repo: Netlify deploys from it. social240/MosAIQ
+# is a read-only copy for the Social account, and deploys nothing.
+#
+# The push uses a deploy key that can write to social240/MosAIQ only:
+#   - public half: social240/MosAIQ -> Settings -> Deploy keys
+#   - private half: this repo's Actions secret SOCIAL_DEPLOY_KEY
+# The push is fast-forward only, so it never overwrites anything in the copy.
+# This file is copied too, but the job only runs in teDdyMucho/MosAIQ.
+
+name: Copy to social240/MosAIQ
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: sync-social
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    if: github.repository == 'teDdyMucho/MosAIQ'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Push main to social240/MosAIQ
+        env:
+          DEPLOY_KEY: ${{ secrets.SOCIAL_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/social_sync
+          chmod 600 ~/.ssh/social_sync
+          # GitHub's published SSH host key (api.github.com/meta).
+          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > ~/.ssh/known_hosts
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/social_sync -o IdentitiesOnly=yes" \
+            git push git@github.com:social240/MosAIQ.git HEAD:refs/heads/main
