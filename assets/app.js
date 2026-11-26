@@ -614,6 +614,7 @@ async function appInit(){
  document.body.classList.add('authReady');
  document.body.classList.toggle('isSubscribed',subscribed);
  setupSubscribeGate(subscribed);
+ setupDelphiEmbed();
  setupCheckoutButton();
  showWelcome(subscribed);
 
@@ -649,6 +650,60 @@ function setupSubscribeGate(subscribed){
   a.setAttribute('href','subscribe.html');
   a.setAttribute('data-gated','1');
  });
+}
+
+// Call and chat. The Delphi embed is not in the page: the server
+// (delphi-embed) gives its channel only to a signed-in member, and only then
+// is Delphi's script added. While the page is open it checks in once a minute.
+// That is what the optional daily cap counts: time with the call or chat open,
+// not talk time (see USAGE-TRACKING.md). When the server says the cap is
+// reached, the conversation closes until the next day.
+async function setupDelphiEmbed(){
+ const wrap=$('[data-delphi]'); if(!wrap)return;
+ const kind=wrap.getAttribute('data-delphi')==='chat'?'chat':'call';
+ const what=kind==='call'?'voice':'chat';
+ const limitText=`You've reached today's ${what} limit. It resets at midnight, New York time.`;
+ const note=text=>{
+  wrap.textContent='';
+  const p=document.createElement('p'); p.className='delphiNote'; p.textContent=text;
+  wrap.appendChild(p);
+ };
+ let r;
+ try{ r=await RMAuth.delphiEmbed(kind); }
+ catch(err){ note(err?.message||'The conversation could not be loaded. Please refresh the page.'); return; }
+ const b=r?.body||{};
+ if(r?.status===403&&b.error==='membership_required'){location.href='subscribe.html';return}
+ if(r?.status===429){note(limitText);return}
+ if(!b.ok||!b.channel){note(b.error||'The conversation could not be loaded. Please refresh the page.');return}
+
+ const s=document.createElement('script');
+ s.src='https://www.delphi.ai/embed.js'; s.async=true;
+ s.setAttribute('data-channel',b.channel);
+ s.setAttribute('data-mode','inline');
+ s.setAttribute('data-width','100%');
+ s.setAttribute('data-height','600');
+ if(kind==='call')s.setAttribute('data-landing-page','VOICE');
+ wrap.textContent=''; wrap.appendChild(s);
+
+ // Near the cap, say how much is left, so a call is not cut off unannounced.
+ const left=document.createElement('p'); left.className='delphiLeft'; left.hidden=true; wrap.after(left);
+ const showLeft=(limit,used)=>{
+  if(limit==null){left.hidden=true;return}
+  const mins=Math.max(0,Math.ceil((limit-used)/60));
+  left.textContent=`About ${mins} minute${mins===1?'':'s'} of ${what} left today.`;
+  left.hidden=mins>5;
+ };
+ showLeft(b.limit_seconds,b.used_seconds);
+
+ const timer=setInterval(async()=>{
+  // A call can go on in a background tab; a chat is counted only while shown.
+  if(kind==='chat'&&document.visibilityState!=='visible')return;
+  let p; try{ p=await RMAuth.delphiPing(b.session_id); }catch(e){ return; }
+  const pb=p?.body;
+  if(!pb?.ok)return;
+  if(pb.stop){ clearInterval(timer); left.remove(); note(limitText); return; }
+  showLeft(pb.limit_seconds,pb.used_seconds);
+ },Math.max(30,Number(b.ping_seconds)||60)*1000);
 }
 
 // Sends the visitor to Stripe Checkout. The button is disabled while the

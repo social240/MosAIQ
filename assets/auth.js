@@ -237,6 +237,26 @@
 
   // --- Supabase implementation --------------------------------------------
 
+  // POSTs to one of our Edge Functions as the signed-in member and returns
+  // { status, body }, so the caller can tell a refusal from a failure.
+  async function fnPost(name, payload) {
+    const { data: sess } = await sb.auth.getSession();
+    const token = sess?.session?.access_token;
+    if (!token) throw new Error('Your session has expired. Please sign in again.');
+    const res = await fetch(cfg.url.replace(/\/+$/, '') + '/functions/v1/' + name, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'apikey': cfg.anonKey,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload || {})
+    });
+    let body = null;
+    try { body = await res.json(); } catch (e) { /* non-JSON error page */ }
+    return { status: res.status, body: body || {} };
+  }
+
   const live = {
     async signUp({ first, last, email, password }) {
       const { data, error } = await sb.auth.signUp({
@@ -492,6 +512,20 @@
       return body;
     },
 
+    // The Delphi call or chat embed. The server (delphi-embed) gives the
+    // channel only to a signed-in member, within the optional daily cap, and
+    // its refusals ('membership_required', 'daily_limit') come back as
+    // { status, body } for the page to explain.
+    async delphiEmbed(kind) {
+      return fnPost('delphi-embed', { action: 'open', kind });
+    },
+
+    // A check-in from an open call or chat page, about once a minute. This is
+    // what the daily cap counts.
+    async delphiPing(sessionId) {
+      return fnPost('delphi-embed', { action: 'ping', session_id: sessionId });
+    },
+
     // Closes the account. The server cancels any Stripe subscription first and
     // deletes the account (and its data) only if that worked. The member must
     // type their own email address; the server checks it against the session.
@@ -718,6 +752,9 @@
     deleteAccount: impl.deleteAccount,
     syncMembership: impl.syncMembership,
     activateTrial: impl.activateTrial,
+    // The offline prototype has no server, so no embed to hand out.
+    delphiEmbed: impl.delphiEmbed || (async () => ({ status: 0, body: { error: 'The conversation needs the live site.' } })),
+    delphiPing: impl.delphiPing || (async () => null),
 
     // Gate for Call / Text. Sends a non-subscriber to the subscription page
     // instead of letting them through. Returns true when access is allowed.

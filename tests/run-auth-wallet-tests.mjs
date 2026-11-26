@@ -33,6 +33,8 @@ const RUN = Date.now().toString(36);
 const mail = tag => `autotest+${RUN}.${tag}@${DOMAIN}`;
 const NOBODY = `nobody-${RUN}@${DOMAIN}`;
 const APP_PAGES = ['home', 'wallet', 'billing', 'preferences', 'subscribe', 'call-intro', 'call', 'chat'];
+// Edge Functions a signed-out visitor must not get an answer from.
+const SERVER_FUNCTIONS = ['create-checkout', 'billing-portal', 'record-usage', 'activate-trial', 'delphi-embed'];
 const ADMIN_FUNCTIONS = ['set_subscription', 'grant_credit', 'record_usage', 'start_trial', 'expire_trials',
   'apply_stripe_subscription', 'link_stripe_customer', 'set_card_summary', 'apply_allowance', 'apply_stripe_allowance'];
 
@@ -340,7 +342,7 @@ const FLASH_SAMPLER = () => {
         if (ok2xx(r) && Array.isArray(r.data) && r.data.length) leaks.push(`${t} returned ${r.data.length} rows`);
       }
       for (const f of ADMIN_FUNCTIONS) { const r = await rpc(f, {}); if (ok2xx(r)) leaks.push(`rpc ${f} ran`); }
-      for (const f of ['create-checkout', 'billing-portal', 'record-usage', 'activate-trial']) { const r = await edge(f); if (ok2xx(r)) leaks.push(`function ${f} answered ${r.status}`); }
+      for (const f of SERVER_FUNCTIONS) { const r = await edge(f); if (ok2xx(r)) leaks.push(`function ${f} answered ${r.status}`); }
       const pages = [];
       for (const pg of APP_PAGES) {
         const ctx = await browser.newContext(); await ctx.addInitScript(FLASH_SAMPLER); const p = await ctx.newPage();
@@ -352,7 +354,7 @@ const FLASH_SAMPLER = () => {
         await ctx.close();
       }
       record('6', 'Member-only access while signed out', !leaks.length && !pages.length ? 'PASS' : 'FAIL',
-        `${APP_PAGES.length} member pages -> all sent to login without showing member content${pages.length ? ' EXCEPT ' + pages.join(', ') : ''}; data tables, ${ADMIN_FUNCTIONS.length} admin functions and 4 server functions refused a signed-out visitor${leaks.length ? ' EXCEPT ' + leaks.join(', ') : ''}`);
+        `${APP_PAGES.length} member pages -> all sent to login without showing member content${pages.length ? ' EXCEPT ' + pages.join(', ') : ''}; data tables, ${ADMIN_FUNCTIONS.length} admin functions and ${SERVER_FUNCTIONS.length} server functions (including delphi-embed, which hands out the call and chat embeds) refused a signed-out visitor${leaks.length ? ' EXCEPT ' + leaks.join(', ') : ''}`);
     });
 
     // Test account B, for cross-account checks and the trial loophole.

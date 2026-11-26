@@ -273,6 +273,10 @@ textarea.input{height:120px;padding-top:14px}
 
 /* Delphi embed */
 .delphiFrameWrap{position:relative;overflow:hidden;border-radius:14px;background:#FFFFFF}
+/* Loading, daily-limit and error text where the embed goes, and the
+   "minutes left" line under it. */
+.delphiNote{margin:0;padding:56px 18px;text-align:center;color:var(--muted);font-size:16px;line-height:1.55}
+.delphiLeft{margin:10px 0 0;text-align:center;color:var(--muted);font-size:14px}
 .delphiLangMask{position:absolute;z-index:10;right:14px;top:14px;width:110px;height:42px;background:#FFFFFF;border-radius:10px;pointer-events:none}
 .authOnlyGate{display:grid;grid-template-columns:1.05fr .95fr;gap:clamp(32px,5vw,64px);align-items:center}
 .authOnlyGate>div:first-child{display:flex;flex-direction:column;gap:20px;align-items:flex-start}

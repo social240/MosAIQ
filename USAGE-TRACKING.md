@@ -72,6 +72,60 @@ period** voice is reset to 3 hours, and unused time expires as its own ledger
 row (`kind = 'expire'`). Each grant is keyed on the subscription and period,
 so repeated events add nothing. app/subscribe.html states these rules.
 
+## Daily limit (safety cap), off by default
+
+Added 2026-11-27: `sql/012_delphi_embed_sessions.sql` and
+`supabase/functions/delphi-embed`.
+
+**The embed is handed out by the server.** `app/call.html` and `app/chat.html`
+no longer carry the Delphi embed. The page asks `delphi-embed`, which checks the
+session and the membership on the server (`is_subscribed()`), and only then
+returns the channel id. The ids live in the function secrets
+`DELPHI_CALL_CHANNEL` and `DELPHI_CHAT_CHANNEL`, never in the repo. The ids
+used before 2026-11-27 are in the public git history, so new embeds should
+replace them; that is a secret change, not a code change.
+
+**What is counted.** Each opened page is a row in `embed_sessions`, and the
+page checks in once a minute: a call while the page is open, a chat while it is
+on screen. Each check-in adds the time since the previous one, at most 90
+seconds. So this is time with the call or chat open, not talk time. It is a
+safety cap, so a few heavy users cannot use up the Delphi plan for everyone.
+It is not billing. A member who blocks the check-ins in their browser is not
+counted; only Delphi's Embed SSO could enforce a limit fully.
+
+**Switch it on.** Minutes per day, New York midnight to midnight; null means no
+limit:
+
+```sql
+update public.daily_limits set call_minutes = 60, chat_minutes = 120
+where user_id is null;
+```
+
+**One member.** Their row replaces the default; null there means no limit for
+them:
+
+```sql
+insert into public.daily_limits (user_id, call_minutes, note)
+values ('<user uuid>', 30, 'heavy user')
+on conflict (user_id) do update set call_minutes = excluded.call_minutes;
+```
+
+**Switch it off.** Set both columns of the default row (`user_id is null`) back
+to null, and delete any member rows.
+
+**Who used the most today:**
+
+```sql
+select u.email, s.kind, round(sum(s.seconds) / 60.0) as minutes
+from public.embed_sessions s join auth.users u on u.id = s.user_id
+where s.day = public.embed_day()
+group by 1, 2 order by minutes desc limit 20;
+```
+
+Over the cap, the page says "You've reached today's voice limit. It resets at
+midnight, New York time." Within 5 minutes of it, a line under the call says
+how many minutes are left.
+
 ## What is still blocked
 
 **Nothing calls `record-usage` yet, because nothing knows how long a call was.**
